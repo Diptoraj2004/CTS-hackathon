@@ -36,12 +36,18 @@ def answer(query: str, mode: Mode, session_id: str = "default") -> RAGResponse:
         return _escalate(mode, "Answer not found in the retrieved label sections",
                          gate.top_score, session_id)
 
-    cit = process_citations(gen.text, gate.evidence)
+    cit = process_citations(gen.text, gate.evidence, question=query)
     confidence = (gate.top_score + cit.coverage) / 2
 
     if cit.invalid_refs:
         return _escalate(mode, f"Model cited non-existent sources: {cit.invalid_refs}",
                          confidence, session_id)
+    if cit.ungrounded_topics:
+        return _escalate(mode, "High-risk topic not covered by the cited label sections: "
+                         + ", ".join(cit.ungrounded_topics), confidence, session_id)
+    if cit.unsupported_numbers:
+        return _escalate(mode, "Numbers in the answer do not match the cited source: "
+                         + " | ".join(cit.unsupported_numbers), confidence, session_id)
     if not cit.citations:
         return _escalate(mode, "Answer contains no citations", confidence, session_id)
     if cit.coverage < config.MIN_CITATION_COVERAGE:
