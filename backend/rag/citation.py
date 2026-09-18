@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from backend.rag.schemas import Citation, RetrievedChunk
 
 _MARKER = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")      # [1]  [1,3]  [1, 3]
+_TRAILING = re.compile(r"([.!?])[ \t]*((?:\[\d+(?:\s*,\s*\d+)*\][ \t]*)+)")  # "day. [1]"
 _SKIP_PHRASES = ("talk to your doctor", "talk to your pharmacist", "doctor or pharmacist")
 
 
@@ -16,6 +17,11 @@ class CitationResult(BaseModel):
     invalid_refs: list[int] = Field(default_factory=list)   # cited numbers with no excerpt
     coverage: float = 0.0                       # share of factual sentences with a citation
     uncited: list[str] = Field(default_factory=list)
+
+
+def _normalize(text: str) -> str:
+    """Move citations written after the full stop to before it: 'day. [1]' -> 'day [1].'"""
+    return _TRAILING.sub(lambda m: " " + m.group(2).strip() + m.group(1), text)
 
 
 def _factual_sentences(text: str) -> list[str]:
@@ -53,7 +59,7 @@ def process(answer: str, evidence: list[RetrievedChunk]) -> CitationResult:
             kept.append(old_to_new[n])
         return "".join(f"[{k}]" for k in sorted(set(kept)))
 
-    new_text = _MARKER.sub(renumber, answer)
+    new_text = _MARKER.sub(renumber, _normalize(answer))
     new_text = re.sub(r"[ \t]+([.,;:])", r"\1", new_text)      # tidy space left by removed markers
 
     facts = _factual_sentences(new_text)
@@ -77,8 +83,13 @@ if __name__ == "__main__":
     bad = ("The maximum recommended dose is 2550 mg per day [2][7]. "
            "It is also safe during pregnancy for most patients. "
            "It is used for type 2 diabetes [1].")
+    trailing = ("The maximum recommended dose is 2550 mg per day. [2]\n\n"
+                "* Take metformin with your meals. [2]\n"
+                "* Do not use it with severe kidney problems. [3]\n\n"
+                "Please talk to your doctor or pharmacist before making any change.")
 
-    for name, answer in (("GOOD answer", good), ("BAD answer", bad)):
+    for name, answer in (("GOOD answer", good), ("BAD answer", bad),
+                         ("TRAILING-citation answer", trailing)):
         r = process(answer, evidence)
         print(f"\n===== {name} =====")
         print(r.text)

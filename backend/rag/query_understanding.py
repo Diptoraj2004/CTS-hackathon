@@ -24,6 +24,10 @@ SECTION_RULES = [
      ["used for", "what is it for", "indicat", "treat"]),
 ]
 
+# Words that refer back to something said earlier ("it", "this drug", "what about ...")
+_FOLLOWUP = re.compile(r"\b(it|its|this|that|these|those|they|them|same|"
+                       r"what about|how about|and for|also)\b")
+
 _sessions: dict[str, InMemoryChatMessageHistory] = {}
 
 
@@ -66,15 +70,21 @@ def section_hints(query: str) -> tuple[list[str], list[str]]:
     return sections, expansions
 
 
+def is_followup(query: str, sections: list[str]) -> bool:
+    """A question continues the previous drug only if it refers back or asks a drug topic."""
+    return bool(sections) or bool(_FOLLOWUP.search(query.lower()))
+
+
 def understand(query: str, mode: Mode, session_id: str = "default") -> QueryInfo:
     history = get_history(session_id)
+    sections, expansions = section_hints(query)
+
     drugs = extract_drugs(query, known_drugs())
-    if not drugs:
+    if not drugs and is_followup(query, sections):
         drugs = previous_drugs(history)  # follow-up: reuse drug from earlier turn
 
     parts = [d for d in drugs if d not in query.lower()]  # add drug if not literally present
     parts.append(query.strip())
-    sections, expansions = section_hints(query)
     if expansions:
         parts.append("(" + "; ".join(expansions) + ")")
     standalone = " ".join(parts)
@@ -96,6 +106,7 @@ if __name__ == "__main__":
         "What about side effects?",
         "Who should not take amoxicilin?",
         "Who should not take this drug?",
+        "What is the weather in Kolkata?",
     ]
     for q in conversation:
         info = understand(q, mode="patient", session_id="demo")
