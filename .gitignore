@@ -1,0 +1,25 @@
+# Virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Secrets (API keys like GROQ_API_KEY go here, never on GitHub)
+.env
+
+# Downloaded models and local data
+models/
+*.faiss
+*.pkl
+chroma_db/
+
+# Editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Frontend dependencies
+node_modules/

@@ -1,0 +1,8 @@
+sentence-transformers
+numpy
+groq
+python-dotenv
+pydantic
+chromadb
+ollama
+langchain-core
