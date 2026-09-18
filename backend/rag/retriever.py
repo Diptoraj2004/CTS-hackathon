@@ -1,11 +1,11 @@
-﻿"""Retrieval: query -> top-K chunks from Chroma, filtered by drug,
+"""Retrieval: query -> top-K chunks from LanceDB, filtered by drug,
 re-ranked with a small bonus for chunks from the sections the user asked about."""
 import re
 from typing import Optional
 
 from backend.rag import config
 from backend.rag.schemas import Chunk, RetrievedChunk
-from backend.rag.vector_store import embed, get_collection
+from backend.rag.vector_store import embed, get_table
 
 SECTION_BOOST = 0.15  # ranking bonus only; the stored score stays the raw similarity
 _STOPWORDS = {"and", "or", "of", "the", "for", "to", "in", "with", "use"}
@@ -29,33 +29,25 @@ def section_matches(section: str, wanted: list[str]) -> bool:
 def retrieve(query: str, drug_names: Optional[list[str]] = None,
              top_k: int = config.TOP_K,
              sections: Optional[list[str]] = None) -> list[RetrievedChunk]:
-    col = get_collection()
-    total = col.count()
-    if total == 0:
+    table = get_table()
+    if table is None or table.count_rows() == 0:
         return []
 
-    where = None
+    n = min(max(top_k * 3, 10), table.count_rows()) if sections else min(top_k, table.count_rows())
+
+    search = table.search(embed([query])[0]).metric("cosine")
     if drug_names:
-        names = [d.lower() for d in drug_names]
-        where = {"drug_name": names[0]} if len(names) == 1 else {"drug_name": {"$in": names}}
+        names = ", ".join(f"'{d.lower()}'" for d in drug_names)
+        search = search.where(f"drug_name IN ({names})")
 
-    # Fetch a larger candidate pool when re-ranking by section
-    n = min(max(top_k * 3, 10), total) if sections else min(top_k, total)
-
-    res = col.query(
-        query_embeddings=embed([query]),
-        n_results=n,
-        where=where,
-        include=["documents", "metadatas", "distances"],
-    )
+    rows = search.limit(n).to_list()
 
     results = []
-    for cid, text, meta, dist in zip(res["ids"][0], res["documents"][0],
-                                     res["metadatas"][0], res["distances"][0]):
-        # Normalized vectors: squared L2 distance d -> cosine similarity 1 - d/2
-        score = max(0.0, min(1.0, 1 - dist / 2))
-        results.append(RetrievedChunk(chunk=Chunk(chunk_id=cid, text=text, **meta),
-                                      score=round(score, 3)))
+    for row in rows:
+        # cosine metric's _distance is 1 - cosine_similarity, so flip it back
+        score = max(0.0, min(1.0, 1 - row["_distance"]))
+        fields = {k: v for k, v in row.items() if k not in ("vector", "_distance")}
+        results.append(RetrievedChunk(chunk=Chunk(**fields), score=round(score, 3)))
 
     if sections:
         results.sort(key=lambda r: r.score + (SECTION_BOOST if section_matches(r.chunk.section, sections) else 0),

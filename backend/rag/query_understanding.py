@@ -7,7 +7,7 @@ from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.rag.schemas import Mode, QueryInfo
-from backend.rag.vector_store import get_collection
+from backend.rag.vector_store import get_table
 
 # (label sections to boost, words added to the query, everyday trigger phrases)
 SECTION_RULES = [
@@ -33,8 +33,10 @@ def get_history(session_id: str) -> InMemoryChatMessageHistory:
 
 def known_drugs() -> list[str]:
     """Drug names that actually exist in the vector store."""
-    metas = get_collection().get(include=["metadatas"])["metadatas"]
-    return sorted({m["drug_name"] for m in metas if m.get("drug_name")})
+    table = get_table()
+    if table is None:
+        return []
+    return sorted(set(table.to_pandas()["drug_name"].tolist()))
 
 
 def extract_drugs(query: str, known: list[str]) -> list[str]:

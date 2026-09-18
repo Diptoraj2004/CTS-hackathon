@@ -1,3 +1,6 @@
+# LanceDB local data
+backend/rag/lancedb_data/
+
 # Virtual environment
 .venv/
 venv/

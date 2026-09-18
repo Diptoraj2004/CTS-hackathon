@@ -1,7 +1,9 @@
-﻿"""Chroma vector store: embed chunks and store them with their metadata."""
+"""LanceDB vector store: embed chunks and store them with their metadata.
+Ported from Soumya's Chroma version — same public functions (get_embedder,
+embed, add_chunks) so nothing calling this module needs to change."""
 from functools import lru_cache
 
-import chromadb
+import lancedb
 from sentence_transformers import SentenceTransformer
 
 from backend.rag import config
@@ -15,38 +17,49 @@ def get_embedder() -> SentenceTransformer:
 
 
 def embed(texts: list[str]) -> list[list[float]]:
-    """Normalized embeddings, so similarity = 1 - (squared L2 distance / 2)."""
+    """Normalized embeddings, so cosine distance behaves as expected."""
     return get_embedder().encode(texts, normalize_embeddings=True).tolist()
 
 
 @lru_cache(maxsize=1)
-def get_collection():
-    client = chromadb.PersistentClient(path=str(config.CHROMA_DIR))
-    # We always supply our own embeddings, so no built-in embedding function.
-    return client.get_or_create_collection(
-        name=config.COLLECTION_NAME, embedding_function=None
-    )
+def get_db():
+    return lancedb.connect(str(config.LANCEDB_DIR))
 
 
-def chunk_metadata(chunk: Chunk) -> dict:
-    """Everything except text and id; Chroma does not accept None values."""
-    return chunk.model_dump(exclude={"text", "chunk_id"}, exclude_none=True)
+def get_table():
+    """None if nothing's been ingested yet — callers should handle that."""
+    db = get_db()
+    if config.COLLECTION_NAME in db.list_tables().tables:
+        return db.open_table(config.COLLECTION_NAME)
+    return None
+
+
+def _row(chunk: Chunk, vector: list[float]) -> dict:
+    row = chunk.model_dump(exclude_none=True)
+    row["vector"] = vector
+    return row
 
 
 def add_chunks(chunks: list[Chunk]) -> None:
-    """Insert or update chunks (safe to run more than once)."""
-    get_collection().upsert(
-        ids=[c.chunk_id for c in chunks],
-        documents=[c.text for c in chunks],
-        embeddings=embed([c.text for c in chunks]),
-        metadatas=[chunk_metadata(c) for c in chunks],
-    )
+    """Insert or update chunks (safe to run more than once — re-adding a
+    chunk_id that already exists replaces it rather than duplicating it)."""
+    vectors = embed([c.text for c in chunks])
+    rows = [_row(c, v) for c, v in zip(chunks, vectors)]
+
+    db = get_db()
+    if config.COLLECTION_NAME in db.list_tables().tables:
+        table = db.open_table(config.COLLECTION_NAME)
+        ids = ", ".join(f"'{c.chunk_id}'" for c in chunks)
+        table.delete(f"chunk_id IN ({ids})")
+        table.add(rows)
+    else:
+        db.create_table(config.COLLECTION_NAME, data=rows)
 
 
 if __name__ == "__main__":
     from backend.rag.sample_chunks import SAMPLE_CHUNKS
 
     add_chunks(SAMPLE_CHUNKS)
-    col = get_collection()
-    print(f"Stored {col.count()} chunks in collection '{config.COLLECTION_NAME}'")
-    print(f"Location: {config.CHROMA_DIR}")
+    table = get_table()
+    print(f"Stored {table.count_rows()} chunks in table '{config.COLLECTION_NAME}'")
+    print(f"Location: {config.LANCEDB_DIR}")

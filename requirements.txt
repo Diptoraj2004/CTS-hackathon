@@ -1,0 +1,4 @@
+-r backend/rag/requirements.txt
+-r backend/safety/requirements.txt
+fastapi
+uvicorn[standard]
