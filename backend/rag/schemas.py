@@ -18,7 +18,7 @@ class Chunk(BaseModel):
 
 
 class RetrievedChunk(BaseModel):
-    """A chunk returned by retrieval, with its similarity score (0 to 1)."""
+    """A chunk returned by retrieval, with its raw similarity score (0 to 1)."""
     chunk: Chunk
     score: float
 
@@ -28,6 +28,7 @@ class QueryInfo(BaseModel):
     original_query: str
     standalone_query: str           # follow-ups rewritten into a full question
     drug_names: list[str] = Field(default_factory=list)
+    section_hints: list[str] = Field(default_factory=list)  # e.g. ["Adverse Reactions"]
     mode: Mode
 
 
