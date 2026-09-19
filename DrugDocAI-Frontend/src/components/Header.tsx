@@ -78,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
       ) : (
         <button
           className="button button-primary navbar-btn"
-          onClick={() => navigate("/select")}
+          onClick={() => navigate("/login")}
         >
           Get Started <ArrowRight size={16} />
         </button>

@@ -9,20 +9,29 @@ import { ragCapabilities } from "../data/medications";
 export const Landing: React.FC = () => {
   const navigate = useNavigate();
   const [animStep, setAnimStep] = useState(0);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
     if (mediaQuery.matches) {
-      setAnimStep(12);
+      setAnimStep(isExpanded ? 12 : 1);
       return;
     }
 
     const interval = setInterval(() => {
-      setAnimStep((prev) => (prev >= 12 ? 0 : prev + 1));
+      setAnimStep((prev) => {
+        if (!isExpanded && prev >= 1) {
+          return 1;
+        }
+        if (prev >= 12) {
+          return 12;
+        }
+        return prev + 1;
+      });
     }, 450);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [isExpanded]);
 
   return (
     <AppLayout>
@@ -50,7 +59,7 @@ export const Landing: React.FC = () => {
             </button>
             <button
               className="button button-outline button-large"
-              onClick={() => navigate("/select")}
+              onClick={() => setIsExpanded(true)}
             >
               Learn More
             </button>
