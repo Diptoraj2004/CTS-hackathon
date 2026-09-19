@@ -115,12 +115,13 @@ export const UploadProcessing: React.FC = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── File state ──
-  const [file, setFile]           = useState<File | null>(null);
-  const [isDragging, setDragging] = useState(false);
+  // ── Multi-file state ──
+  const [files, setFiles]                 = useState<File[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null);
+  const [completedFileIndices, setCompletedFileIndices] = useState<number[]>([]);
+  const [isDragging, setDragging]         = useState(false);
 
   // ── Pipeline state ──
-  // stageStatuses: maps stageId → status
   const initStatuses = (): Record<string, StageStatus> =>
     Object.fromEntries(PIPELINE_STAGES.map(s => [s.id, "pending"]));
 
@@ -130,6 +131,22 @@ export const UploadProcessing: React.FC = () => {
   const [hasFailed, setHasFailed]         = useState(false);
   const [revealedDetails, setDetails]     = useState<number>(0); // how many DETAIL_STEPS are revealed
   const [currentDetailProcessing, setCurrentDetailProcessing] = useState<number | null>(null);
+  const [detailLogs, setDetailLogs]       = useState<ProcessingDetail[]>([]);
+
+  // ── File addition & management ──
+  const addFiles = (newFiles: File[]) => {
+    if (newFiles.length === 0) return;
+    setFiles(prev => [...prev, ...newFiles]);
+    setStageStatuses(initStatuses());
+    setIsProcessing(false);
+    setIsDone(false);
+    setHasFailed(false);
+    setDetails(0);
+    setCurrentDetailProcessing(null);
+    setCompletedFileIndices([]);
+    setCurrentFileIndex(null);
+    setDetailLogs([]);
+  };
 
   // ── Drag / drop handlers ──
   const handleDragOver  = useCallback((e: React.DragEvent) => { e.preventDefault(); setDragging(true);  }, []);
@@ -137,84 +154,115 @@ export const UploadProcessing: React.FC = () => {
   const handleDrop      = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) selectFile(dropped);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const selectFile = (f: File) => {
-    setFile(f);
-    setStageStatuses(initStatuses());
-    setIsProcessing(false);
-    setIsDone(false);
-    setHasFailed(false);
-    setDetails(0);
-    setCurrentDetailProcessing(null);
-  };
+    const dropped = Array.from(e.dataTransfer.files);
+    if (dropped.length > 0) addFiles(dropped);
+  }, []);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (f) selectFile(f);
-    // reset input so same file can be re-selected
+    const selected = Array.from(e.target.files || []);
+    if (selected.length > 0) addFiles(selected);
     e.target.value = "";
   };
 
-  const handleRemove = () => {
-    setFile(null);
+  const handleRemoveFile = (indexToRemove: number) => {
+    setFiles(prev => prev.filter((_, idx) => idx !== indexToRemove));
+    if (files.length <= 1) {
+      setStageStatuses(initStatuses());
+      setIsProcessing(false);
+      setIsDone(false);
+      setHasFailed(false);
+      setDetails(0);
+      setCurrentDetailProcessing(null);
+      setCompletedFileIndices([]);
+      setCurrentFileIndex(null);
+      setDetailLogs([]);
+    }
+  };
+
+  const handleRemoveAll = () => {
+    setFiles([]);
     setStageStatuses(initStatuses());
     setIsProcessing(false);
     setIsDone(false);
     setHasFailed(false);
     setDetails(0);
     setCurrentDetailProcessing(null);
+    setCompletedFileIndices([]);
+    setCurrentFileIndex(null);
+    setDetailLogs([]);
   };
 
-  // ── Simulated upload ──
+  // ── Simulated upload pipeline ──
   const handleUpload = async () => {
-    if (!file || isProcessing) return;
+    if (files.length === 0 || isProcessing) return;
     setIsProcessing(true);
     setIsDone(false);
     setHasFailed(false);
     setDetails(0);
     setCurrentDetailProcessing(null);
     setStageStatuses(initStatuses());
+    setCompletedFileIndices([]);
+    setDetailLogs([]);
 
-    // Progress through each stage sequentially
-    let detailIdx = 0;
-    for (let i = 0; i < PIPELINE_STAGES.length; i++) {
-      const stageId = PIPELINE_STAGES[i].id;
+    // ─────────────────────────────────────────────────────────────────────────
+    // IMPORTANT FOR FUTURE BACKEND INTEGRATION:
+    // When connecting to backend, construct FormData like this:
+    //
+    // const formData = new FormData();
+    // files.forEach((file) => {
+    //   formData.append("files", file);
+    // });
+    // const response = await fetch("/api/admin/upload", { method: "POST", body: formData });
+    // ─────────────────────────────────────────────────────────────────────────
 
-      // Mark current stage as processing
-      setStageStatuses(prev => ({ ...prev, [stageId]: "processing" }));
+    for (let fIdx = 0; fIdx < files.length; fIdx++) {
+      setCurrentFileIndex(fIdx);
+      const activeFile = files[fIdx];
+      const isMulti = files.length > 1;
+      const filePrefix = isMulti ? `[${fIdx + 1}/${files.length} - ${activeFile.name}] ` : "";
 
-      // Show a "processing" detail bullet if there's a corresponding one
-      if (detailIdx < DETAIL_STEPS.length && !DETAIL_STEPS[detailIdx].done) {
-        setCurrentDetailProcessing(detailIdx);
-      }
+      setStageStatuses(initStatuses());
 
-      await delay(STAGE_DURATIONS_MS[i]);
+      let detailIdx = 0;
+      for (let i = 0; i < PIPELINE_STAGES.length; i++) {
+        const stageId = PIPELINE_STAGES[i].id;
+        setStageStatuses(prev => ({ ...prev, [stageId]: "processing" }));
 
-      // Mark complete
-      setStageStatuses(prev => ({ ...prev, [stageId]: "complete" }));
+        if (detailIdx < DETAIL_STEPS.length && !DETAIL_STEPS[detailIdx].done) {
+          setCurrentDetailProcessing(detailIdx);
+        }
 
-      // Reveal a detail line on stage complete
-      if (detailIdx < DETAIL_STEPS.length) {
-        // Some stages emit 2 detail lines (parse → OCR + text extracted)
-        const detailsForStage = i === 3 ? 2 : 1;
-        for (let d = 0; d < detailsForStage; d++) {
-          if (detailIdx < DETAIL_STEPS.length) {
-            setDetails(prev => prev + 1);
-            setCurrentDetailProcessing(null);
-            detailIdx++;
+        const speedFactor = isMulti ? 0.6 : 1;
+        await delay(STAGE_DURATIONS_MS[i] * speedFactor);
+
+        setStageStatuses(prev => ({ ...prev, [stageId]: "complete" }));
+
+        if (detailIdx < DETAIL_STEPS.length) {
+          const detailsForStage = i === 3 ? 2 : 1;
+          for (let d = 0; d < detailsForStage; d++) {
+            if (detailIdx < DETAIL_STEPS.length) {
+              const baseDetail = DETAIL_STEPS[detailIdx];
+              setDetailLogs(prev => [
+                ...prev,
+                { ...baseDetail, text: isMulti ? `${filePrefix}${baseDetail.text}` : baseDetail.text },
+              ]);
+              setDetails(prev => prev + 1);
+              setCurrentDetailProcessing(null);
+              detailIdx++;
+            }
           }
         }
       }
+
+      setCompletedFileIndices(prev => [...prev, fIdx]);
     }
 
+    setCurrentFileIndex(null);
     setIsProcessing(false);
     setIsDone(true);
   };
 
-  const canUpload = !!file && !isProcessing && !isDone;
+  const canUpload = files.length > 0 && !isProcessing && !isDone;
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -229,73 +277,119 @@ export const UploadProcessing: React.FC = () => {
       {/* ── Page subtitle ── */}
       <p className="up-subtitle">Add verified drug documentation to the DrugDoc AI knowledge base.</p>
 
-      {/* ── Top row: Drop zone + Selected file ── */}
+      {/* ── Top row: Drop zone + Selected files ── */}
       <div className="up-top-row">
 
         {/* Drop zone */}
         <div
-          className={`up-dropzone${isDragging ? " up-dropzone--drag" : ""}${file ? " up-dropzone--has-file" : ""}`}
+          className={`up-dropzone${isDragging ? " up-dropzone--drag" : ""}${files.length > 0 ? " up-dropzone--has-file" : ""}`}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          onClick={() => !file && fileInputRef.current?.click()}
+          onClick={() => fileInputRef.current?.click()}
           role="button"
           tabIndex={0}
           aria-label="Upload document drop zone"
-          onKeyDown={e => e.key === "Enter" && !file && fileInputRef.current?.click()}
+          onKeyDown={e => e.key === "Enter" && fileInputRef.current?.click()}
         >
           <UploadCloud size={44} className="up-dz-icon" />
-          <p className="up-dz-heading">Drag &amp; drop your document here</p>
+          <p className="up-dz-heading">
+            {files.length > 0 ? "Drag & drop more documents here" : "Drag & drop your document(s) here"}
+          </p>
           <p className="up-dz-or">or</p>
           <button
             type="button"
             className="up-choose-btn"
             onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
           >
-            Choose File
+            {files.length > 0 ? "Choose More Files" : "Choose Files"}
           </button>
           <p className="up-dz-hint">Supported: PDF / XML / image-based documents</p>
-          <p className="up-dz-hint up-dz-hint--small">Maximum file size: 50 MB</p>
+          <p className="up-dz-hint up-dz-hint--small">Maximum file size: 50 MB per file</p>
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             accept=".pdf,.xml,.png,.jpg,.jpeg,.tiff,.webp,.docx"
             className="up-file-input"
             onChange={handleFileChange}
-            aria-label="Choose file"
+            aria-label="Choose files"
           />
         </div>
 
-        {/* Selected file card */}
+        {/* Selected files card */}
         <div className="admin-card up-file-card">
-          <div className="up-file-card-header">
-            <Layers size={15} className="up-file-card-icon" />
-            <span className="up-file-card-title">Selected File</span>
+          <div className="up-file-card-header" style={{ justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <Layers size={15} className="up-file-card-icon" />
+              <span className="up-file-card-title">
+                {files.length > 1 ? `Selected Files (${files.length})` : "Selected File"}
+              </span>
+            </div>
+            {files.length > 0 && !isProcessing && (
+              <button
+                type="button"
+                className="up-remove-all-btn"
+                onClick={handleRemoveAll}
+                title="Remove all files"
+              >
+                Remove All
+              </button>
+            )}
           </div>
 
-          {file ? (
+          {files.length > 0 ? (
             <>
-              <div className="up-file-info">
-                <div className="up-file-thumb">
-                  <FileText size={22} className="up-file-thumb-icon" />
-                </div>
-                <div className="up-file-meta">
-                  <span className="up-file-name">{file.name}</span>
-                  <span className="up-file-detail">
-                    {file.name.split(".").pop()?.toUpperCase() ?? "FILE"}
-                    &nbsp;•&nbsp;{formatSize(file.size)}
-                    &nbsp;•&nbsp;{isDone ? <span className="up-file-ready">Ready</span> : "Ready to upload"}
-                  </span>
-                </div>
-                <button
-                  className="up-file-remove"
-                  onClick={handleRemove}
-                  aria-label="Remove file"
-                  title="Remove file"
-                  disabled={isProcessing}
-                >
-                  <X size={14} />
-                </button>
+              <div
+                className="up-file-list"
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "10px",
+                  maxHeight: "220px",
+                  overflowY: "auto",
+                  paddingRight: "2px",
+                }}
+              >
+                {files.map((f, idx) => {
+                  const isCurrent = currentFileIndex === idx;
+                  const isCompleted = completedFileIndices.includes(idx);
+
+                  let statusText = "Ready to upload";
+                  let statusClass = "";
+                  if (isCompleted) {
+                    statusText = "Ready";
+                    statusClass = "up-file-ready";
+                  } else if (isCurrent) {
+                    statusText = "Processing...";
+                    statusClass = "up-file-processing";
+                  }
+
+                  return (
+                    <div key={`${f.name}-${idx}`} className="up-file-info">
+                      <div className="up-file-thumb">
+                        <FileText size={22} className="up-file-thumb-icon" />
+                      </div>
+                      <div className="up-file-meta">
+                        <span className="up-file-name">{f.name}</span>
+                        <span className="up-file-detail">
+                          {f.name.split(".").pop()?.toUpperCase() ?? "FILE"}
+                          &nbsp;•&nbsp;{formatSize(f.size)}
+                          &nbsp;•&nbsp;<span className={statusClass}>{statusText}</span>
+                        </span>
+                      </div>
+                      <button
+                        className="up-file-remove"
+                        onClick={() => handleRemoveFile(idx)}
+                        aria-label={`Remove ${f.name}`}
+                        title="Remove file"
+                        disabled={isProcessing}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
 
               <div className="up-file-actions">
@@ -306,7 +400,7 @@ export const UploadProcessing: React.FC = () => {
                   disabled={isProcessing}
                 >
                   <RefreshCw size={13} />
-                  Change File
+                  Add More Files
                 </button>
                 {!isDone ? (
                   <button
@@ -318,7 +412,7 @@ export const UploadProcessing: React.FC = () => {
                     {isProcessing ? (
                       <><Loader2 size={14} className="up-spin" /> Processing…</>
                     ) : (
-                      <><UploadCloud size={14} /> Upload Document</>
+                      <><UploadCloud size={14} /> {files.length > 1 ? "Upload Documents" : "Upload Document"}</>
                     )}
                   </button>
                 ) : (
@@ -335,8 +429,8 @@ export const UploadProcessing: React.FC = () => {
           ) : (
             <div className="up-file-empty">
               <FileText size={28} className="up-file-empty-icon" />
-              <p className="up-file-empty-text">No file selected</p>
-              <p className="up-file-empty-sub">Choose or drag a file to begin.</p>
+              <p className="up-file-empty-text">No files selected</p>
+              <p className="up-file-empty-sub">Choose or drag files to begin.</p>
             </div>
           )}
         </div>
@@ -348,7 +442,11 @@ export const UploadProcessing: React.FC = () => {
           <FileScan size={16} className="up-pipeline-header-icon" />
           <div>
             <h2 className="admin-card-title" style={{ marginBottom: 0 }}>Processing Pipeline</h2>
-            <p className="admin-card-sub">Your document will go through several steps to be validated, processed and indexed.</p>
+            <p className="admin-card-sub">
+              {files.length > 1
+                ? "Selected documents will go through each step to be validated, processed and indexed."
+                : "Your document will go through several steps to be validated, processed and indexed."}
+            </p>
           </div>
         </div>
         <div className="up-pipeline-stages">
@@ -377,20 +475,34 @@ export const UploadProcessing: React.FC = () => {
             <div className="up-details-empty">
               <Info size={18} className="up-details-empty-icon" />
               <p className="up-details-empty-text">No document uploaded yet.</p>
-              <p className="up-details-empty-sub">Upload a document to see processing details here.</p>
+              <p className="up-details-empty-sub">Upload documents to see processing details here.</p>
             </div>
           ) : (
             <div className="up-details-log">
-              {DETAIL_STEPS.slice(0, revealedDetails).map((d, i) => (
+              {detailLogs.map((d, i) => (
                 <DetailItem key={i} detail={d} />
               ))}
-              {isProcessing && currentDetailProcessing !== null && revealedDetails < DETAIL_STEPS.length && (
-                <DetailItem detail={DETAIL_STEPS[currentDetailProcessing]} processing={true} />
+              {isProcessing && currentDetailProcessing !== null && (
+                <DetailItem
+                  detail={
+                    files.length > 1 && currentFileIndex !== null
+                      ? {
+                          ...DETAIL_STEPS[currentDetailProcessing],
+                          text: `[${currentFileIndex + 1}/${files.length} - ${files[currentFileIndex].name}] ${DETAIL_STEPS[currentDetailProcessing].text}`,
+                        }
+                      : DETAIL_STEPS[currentDetailProcessing]
+                  }
+                  processing={true}
+                />
               )}
               {isDone && (
                 <div className="up-details-done">
                   <CheckCircle2 size={16} className="up-details-done-icon" />
-                  <span>Document is ready in the library.</span>
+                  <span>
+                    {files.length > 1
+                      ? `All ${files.length} documents are ready in the library.`
+                      : "Document is ready in the library."}
+                  </span>
                 </div>
               )}
             </div>

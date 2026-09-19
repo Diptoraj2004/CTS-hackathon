@@ -181,8 +181,13 @@ export const Login: React.FC = () => {
                   <button
                     type="button"
                     className="password-toggle-btn"
-                    onClick={() => setShowPassword(!showPassword)}
-                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    onClick={role === "user" ? () => setShowPassword(!showPassword) : undefined}
+                    onMouseDown={role === "admin" ? () => setShowPassword(true) : undefined}
+                    onMouseUp={role === "admin" ? () => setShowPassword(false) : undefined}
+                    onMouseLeave={role === "admin" ? () => setShowPassword(false) : undefined}
+                    onTouchStart={role === "admin" ? () => setShowPassword(true) : undefined}
+                    onTouchEnd={role === "admin" ? () => setShowPassword(false) : undefined}
+                    aria-label={role === "admin" ? "Hold to show password" : (showPassword ? "Hide password" : "Show password")}
                   >
                     {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                   </button>
@@ -197,9 +202,8 @@ export const Login: React.FC = () => {
               {/* SUBMIT BUTTON */}
               <button
                 type="submit"
-                className={`button button-large login-submit-btn ${
-                  role === "admin" ? "button-admin-primary" : "button-primary"
-                }`}
+                className={`button button-large login-submit-btn ${role === "admin" ? "button-admin-primary" : "button-primary"
+                  }`}
                 disabled={isLoading}
               >
                 {isLoading ? "Signing In..." : "Sign In"} <ArrowRight size={18} />
