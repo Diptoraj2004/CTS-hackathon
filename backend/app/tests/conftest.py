@@ -1,6 +1,6 @@
 import pytest
 import os
-import fitz
+import pymupdf as fitz
 from lxml import etree
 
 @pytest.fixture(scope="session")
