@@ -1,0 +1,30 @@
+{
+    "Cocina": {
+        "unknown": {
+            "document_id": "pdf_tmpzwm0g3ek.pdf",
+            "set_id": "unknown",
+            "drug_name": "Cocina",
+            "active_ingredient": "unknown",
+            "label_version": "unknown",
+            "effective_date": "unknown",
+            "ingestion_timestamp": "2026-09-19T19:16:52.235713",
+            "source_file": "tmpzwm0g3ek.pdf",
+            "source_type": "pdf",
+            "source_identifier": "tmpzwm0g3ek.pdf"
+        }
+    },
+    "pokemon": {
+        "unknown": {
+            "document_id": "pdf_tmp7wfqcbde.pdf",
+            "set_id": "unknown",
+            "drug_name": "pokemon",
+            "active_ingredient": "unknown",
+            "label_version": "unknown",
+            "effective_date": "unknown",
+            "ingestion_timestamp": "2026-09-19T19:44:47.319870",
+            "source_file": "tmp7wfqcbde.pdf",
+            "source_type": "pdf",
+            "source_identifier": "tmp7wfqcbde.pdf"
+        }
+    }
+}

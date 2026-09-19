@@ -21,7 +21,8 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { AdminLayout } from "../../layouts/AdminLayout";
-
+const API_BASE =
+  import.meta.env.VITE_API_BASE || "http://localhost:8000";
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,8 +116,9 @@ export const UploadProcessing: React.FC = () => {
   const navigate = useNavigate();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Multi-file state ──
+  // ── Multi-file & Form state ──
   const [files, setFiles]                 = useState<File[]>([]);
+  const [drugName, setDrugName]           = useState<string>("");
   const [currentFileIndex, setCurrentFileIndex] = useState<number | null>(null);
   const [completedFileIndices, setCompletedFileIndices] = useState<number[]>([]);
   const [isDragging, setDragging]         = useState(false);
@@ -192,9 +194,9 @@ export const UploadProcessing: React.FC = () => {
     setDetailLogs([]);
   };
 
-  // ── Simulated upload pipeline ──
+  // ── Real upload ingestion pipeline ──
   const handleUpload = async () => {
-    if (files.length === 0 || isProcessing) return;
+    if (files.length === 0 || !drugName.trim() || isProcessing) return;
     setIsProcessing(true);
     setIsDone(false);
     setHasFailed(false);
@@ -204,16 +206,7 @@ export const UploadProcessing: React.FC = () => {
     setCompletedFileIndices([]);
     setDetailLogs([]);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // IMPORTANT FOR FUTURE BACKEND INTEGRATION:
-    // When connecting to backend, construct FormData like this:
-    //
-    // const formData = new FormData();
-    // files.forEach((file) => {
-    //   formData.append("files", file);
-    // });
-    // const response = await fetch("/api/admin/upload", { method: "POST", body: formData });
-    // ─────────────────────────────────────────────────────────────────────────
+    const cleanDrugName = drugName.trim();
 
     for (let fIdx = 0; fIdx < files.length; fIdx++) {
       setCurrentFileIndex(fIdx);
@@ -223,38 +216,76 @@ export const UploadProcessing: React.FC = () => {
 
       setStageStatuses(initStatuses());
 
-      let detailIdx = 0;
-      for (let i = 0; i < PIPELINE_STAGES.length; i++) {
-        const stageId = PIPELINE_STAGES[i].id;
-        setStageStatuses(prev => ({ ...prev, [stageId]: "processing" }));
+      // Stage 1: Uploading
+      setStageStatuses(prev => ({ ...prev, upload: "processing" }));
+      setDetailLogs(prev => [
+        ...prev,
+        { text: `${filePrefix}Uploading document...`, done: false }
+      ]);
 
-        if (detailIdx < DETAIL_STEPS.length && !DETAIL_STEPS[detailIdx].done) {
-          setCurrentDetailProcessing(detailIdx);
-        }
+      try {
+        const formData = new FormData();
+        formData.append("file", activeFile);
 
-        const speedFactor = isMulti ? 0.6 : 1;
-        await delay(STAGE_DURATIONS_MS[i] * speedFactor);
+        setStageStatuses(prev => ({ ...prev, upload: "complete", validate: "processing", detect: "processing", parse: "processing" }));
 
-        setStageStatuses(prev => ({ ...prev, [stageId]: "complete" }));
+        const url = `${API_BASE}/ingest?drug_name=${encodeURIComponent(cleanDrugName)}`;
+        const response = await fetch(url, {
+          method: "POST",
+          body: formData,
+        });
 
-        if (detailIdx < DETAIL_STEPS.length) {
-          const detailsForStage = i === 3 ? 2 : 1;
-          for (let d = 0; d < detailsForStage; d++) {
-            if (detailIdx < DETAIL_STEPS.length) {
-              const baseDetail = DETAIL_STEPS[detailIdx];
-              setDetailLogs(prev => [
-                ...prev,
-                { ...baseDetail, text: isMulti ? `${filePrefix}${baseDetail.text}` : baseDetail.text },
-              ]);
-              setDetails(prev => prev + 1);
-              setCurrentDetailProcessing(null);
-              detailIdx++;
+        if (!response.ok) {
+          let errorMsg = `Server returned status ${response.status}`;
+          try {
+            const errData = await response.json();
+            if (errData && errData.detail) {
+              errorMsg = typeof errData.detail === "string" ? errData.detail : JSON.stringify(errData.detail);
             }
+          } catch {
+            // fallback to default errorMsg
           }
+          throw new Error(errorMsg);
         }
-      }
 
-      setCompletedFileIndices(prev => [...prev, fIdx]);
+        const result = await response.json();
+        const chunksStored = result.chunks_stored ?? 0;
+
+        setStageStatuses(prev => ({
+          ...prev,
+          validate: "complete",
+          detect: "complete",
+          parse: "complete",
+          index: "complete",
+          ready: "complete"
+        }));
+
+        setDetailLogs(prev => [
+          ...prev.slice(0, -1),
+          { text: `${filePrefix}Uploaded successfully`, done: true },
+          { text: `${filePrefix}Document parsed and checked for safety`, done: true },
+          { text: `${filePrefix}Stored ${chunksStored} chunk(s) in RAG store for "${cleanDrugName}"`, done: true },
+        ]);
+        setDetails(prev => prev + 3);
+        setCompletedFileIndices(prev => [...prev, fIdx]);
+      } catch (err: any) {
+        setHasFailed(true);
+        setStageStatuses(prev => ({
+          upload: prev.upload === "complete" ? "complete" : "failed",
+          validate: "failed",
+          detect: "failed",
+          parse: "failed",
+          index: "failed",
+          ready: "failed",
+        }));
+        setDetailLogs(prev => [
+          ...prev.slice(0, -1),
+          { text: `${filePrefix}Ingestion failed: ${err.message || "Unknown error"}`, done: false },
+        ]);
+        setIsProcessing(false);
+        setCurrentFileIndex(null);
+        return;
+      }
     }
 
     setCurrentFileIndex(null);
@@ -262,7 +293,11 @@ export const UploadProcessing: React.FC = () => {
     setIsDone(true);
   };
 
-  const canUpload = files.length > 0 && !isProcessing && !isDone;
+  const canUpload =
+    files.length > 0 &&
+    drugName.trim().length > 0 &&
+    !isProcessing &&
+    !isDone;
 
   // ─────────────────────────────────────────────────────────────────────────
   return (
@@ -276,6 +311,42 @@ export const UploadProcessing: React.FC = () => {
 
       {/* ── Page subtitle ── */}
       <p className="up-subtitle">Add verified drug documentation to the DrugDoc AI knowledge base.</p>
+
+      {/* ── Drug Name Input Card ── */}
+      <div className="admin-card" style={{ marginBottom: "20px" }}>
+        <label
+          htmlFor="drug-name-input"
+          style={{
+            display: "block",
+            fontSize: "14px",
+            fontWeight: 600,
+            marginBottom: "8px",
+            color: "var(--color-text-main, #0f172a)",
+          }}
+        >
+          Drug Name <span style={{ color: "#ef4444" }}>*</span>
+        </label>
+        <input
+          id="drug-name-input"
+          type="text"
+          value={drugName}
+          onChange={e => setDrugName(e.target.value)}
+          placeholder="e.g. Paracetamol"
+          disabled={isProcessing}
+          required
+          style={{
+            width: "100%",
+            padding: "10px 14px",
+            fontSize: "14px",
+            borderRadius: "6px",
+            border: "1px solid var(--color-border, #cbd5e1)",
+            backgroundColor: isProcessing ? "var(--color-bg-subtle, #f8fafc)" : "#ffffff",
+            color: "var(--color-text-main, #0f172a)",
+            outline: "none",
+            boxSizing: "border-box",
+          }}
+        />
+      </div>
 
       {/* ── Top row: Drop zone + Selected files ── */}
       <div className="up-top-row">
@@ -304,13 +375,13 @@ export const UploadProcessing: React.FC = () => {
           >
             {files.length > 0 ? "Choose More Files" : "Choose Files"}
           </button>
-          <p className="up-dz-hint">Supported: PDF / XML / image-based documents</p>
+          <p className="up-dz-hint">Supported: PDF / XML documents</p>
           <p className="up-dz-hint up-dz-hint--small">Maximum file size: 50 MB per file</p>
           <input
             ref={fileInputRef}
             type="file"
             multiple
-            accept=".pdf,.xml,.png,.jpg,.jpeg,.tiff,.webp,.docx"
+            accept=".pdf,.xml"
             className="up-file-input"
             onChange={handleFileChange}
             aria-label="Choose files"
@@ -471,7 +542,7 @@ export const UploadProcessing: React.FC = () => {
             <h2 className="admin-card-title" style={{ marginBottom: 0 }}>Processing Details</h2>
           </div>
 
-          {revealedDetails === 0 && !isProcessing ? (
+          {revealedDetails === 0 && !isProcessing && !hasFailed ? (
             <div className="up-details-empty">
               <Info size={18} className="up-details-empty-icon" />
               <p className="up-details-empty-text">No document uploaded yet.</p>
@@ -529,13 +600,6 @@ export const UploadProcessing: React.FC = () => {
               <div className="up-type-body">
                 <span className="up-type-name">XML Documents</span>
                 <span className="up-type-desc">Structured regulatory data (e.g. FDA, EMA, WHO)</span>
-              </div>
-            </div>
-            <div className="up-type-item">
-              <div className="up-type-icon up-type-icon--img"><Image size={18} /></div>
-              <div className="up-type-body">
-                <span className="up-type-name">Image-based Documents</span>
-                <span className="up-type-desc">Scanned documents, images (OCR will be performed)</span>
               </div>
             </div>
           </div>

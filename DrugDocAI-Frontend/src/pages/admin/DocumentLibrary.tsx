@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Search,
@@ -15,19 +15,53 @@ import {
   X,
   FileSpreadsheet,
   FileType2,
+  Loader2,
+  RefreshCw,
 } from "lucide-react";
 import { AdminLayout } from "../../layouts/AdminLayout";
 import {
-  DOCUMENTS,
-  DOC_SOURCES,
-  DOC_DRUGS,
-  DOC_FILETYPES,
-  DOC_STATUSES,
+  type DocumentRecord,
   type DocStatus,
   type FileType,
 } from "../../data/adminData";
 
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 const PAGE_SIZE = 10;
+
+// Helper to determine file type from filename extension
+const getFileType = (fileName: string): FileType => {
+  const ext = fileName.split(".").pop()?.toUpperCase() || "";
+  if (ext === "XLSX" || ext === "XLS") return "XLSX";
+  if (ext === "DOCX" || ext === "DOC") return "DOCX";
+  return "PDF";
+};
+
+// Map raw backend item to DocumentRecord shape
+const mapBackendRecord = (item: any, index: number, defaultDrug?: string): DocumentRecord => {
+  const fileName = item.source_file || item.filename || item.file_name || `document_${index + 1}.pdf`;
+  const drug = item.drug_name || defaultDrug || "General / Unspecified";
+  const source = item.source_type || item.source || "Regulatory / Ingested";
+  const version = item.version || (item.section ? `Sec: ${item.section}` : "v1.0");
+  const fileType = getFileType(fileName);
+
+  let uploadedOn = "Ingested";
+  if (item.effective_date) {
+    uploadedOn = item.effective_date;
+  } else if (item.page !== undefined && item.page !== null) {
+    uploadedOn = `Page ${item.page}`;
+  }
+
+  return {
+    id: item.chunk_id || item.id || `doc-${index}-${fileName}`,
+    fileName,
+    drug,
+    source,
+    fileType,
+    version,
+    uploadedOn,
+    status: "Processed",
+  };
+};
 
 // ── File type icon ─────────────────────────────────────────────────────────────
 const FileIcon: React.FC<{ type: FileType }> = ({ type }) => {
@@ -137,48 +171,124 @@ const FilterSelect: React.FC<FilterSelectProps> = ({ id, label, value, options, 
 export const DocumentLibrary: React.FC = () => {
   const navigate = useNavigate();
 
+  // Backend state
+  const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
   // Filter state
-  const [search, setSearch]           = useState("");
-  const [filterSource, setSource]     = useState("");
-  const [filterDrug, setDrug]         = useState("");
-  const [filterType, setType]         = useState<FileType | "">("");
-  const [filterStatus, setStatus]     = useState<DocStatus | "">("");
-  const [page, setPage]               = useState(1);
+  const [search, setSearch] = useState("");
+  const [filterSource, setSource] = useState("");
+  const [filterDrug, setDrug] = useState("");
+  const [filterType, setType] = useState<FileType | "">("");
+  const [filterStatus, setStatus] = useState<DocStatus | "">("");
+  const [page, setPage] = useState(1);
+
+  // Fetch sources from backend
+  const fetchSources = useCallback(async (selectedDrug?: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const url = selectedDrug?.trim()
+        ? `${API_BASE}/sources/${encodeURIComponent(selectedDrug.trim())}`
+        : `${API_BASE}/sources`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        let errText = `Failed to fetch documents (HTTP ${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson && errJson.detail) {
+            errText = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(errText);
+      }
+      const data = await res.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Invalid response format received from server.");
+      }
+      const mapped = data.map((item, idx) => mapBackendRecord(item, idx, selectedDrug));
+      setDocuments(mapped);
+    } catch (err: any) {
+      setError(err.message || "An error occurred while loading document sources.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchSources();
+  }, [fetchSources]);
+
+  // Derived filter options from fetched documents
+  const docSources = useMemo(() => [...new Set(documents.map(d => d.source))].sort(), [documents]);
+  const docDrugs = useMemo(() => [...new Set(documents.map(d => d.drug))].sort(), [documents]);
+  const docFileTypes: FileType[] = ["PDF", "XLSX", "DOCX"];
+  const docStatuses: DocStatus[] = ["Processed", "Processing", "Error"];
 
   const hasFilters = search || filterSource || filterDrug || filterType || filterStatus;
 
   const clearFilters = () => {
-    setSearch(""); setSource(""); setDrug(""); setType(""); setStatus(""); setPage(1);
+    setSearch("");
+    setSource("");
+    setType("");
+    setStatus("");
+    setPage(1);
+    if (filterDrug) {
+      setDrug("");
+      fetchSources();
+    }
   };
 
   // Filtered & paginated data
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return DOCUMENTS.filter(doc => {
+    return documents.filter(doc => {
       if (q && !doc.fileName.toLowerCase().includes(q) && !doc.drug.toLowerCase().includes(q) && !doc.source.toLowerCase().includes(q)) return false;
       if (filterSource && doc.source !== filterSource) return false;
-      if (filterDrug   && doc.drug   !== filterDrug)   return false;
-      if (filterType   && doc.fileType !== filterType) return false;
-      if (filterStatus && doc.status  !== filterStatus)return false;
+      if (filterDrug && doc.drug.toLowerCase() !== filterDrug.toLowerCase()) return false;
+      if (filterType && doc.fileType !== filterType) return false;
+      if (filterStatus && doc.status !== filterStatus) return false;
       return true;
     });
-  }, [search, filterSource, filterDrug, filterType, filterStatus]);
+  }, [documents, search, filterSource, filterDrug, filterType, filterStatus]);
 
-  // Reset to page 1 when filters change
-  const handleSearch   = (v: string)              => { setSearch(v);       setPage(1); };
-  const handleSource   = (v: string)              => { setSource(v);       setPage(1); };
-  const handleDrug     = (v: string)              => { setDrug(v);         setPage(1); };
-  const handleType     = (v: string)              => { setType(v as FileType | "");   setPage(1); };
-  const handleStatus   = (v: string)              => { setStatus(v as DocStatus | "");setPage(1); };
+  // Filter change handlers
+  const handleSearch = (v: string) => { setSearch(v); setPage(1); };
+  const handleSource = (v: string) => { setSource(v); setPage(1); };
+  const handleType = (v: string) => { setType(v as FileType | ""); setPage(1); };
+  const handleStatus = (v: string) => { setStatus(v as DocStatus | ""); setPage(1); };
 
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageRows   = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Backend-aware Drug filter handler
+  const handleDrug = (selected: string) => {
+    setDrug(selected);
+    setPage(1);
+    fetchSources(selected);
+  };
 
-  // KPI summary (always from full dataset so counts don't change when filtering)
-  const total      = DOCUMENTS.length;
-  const processed  = DOCUMENTS.filter(d => d.status === "Processed").length;
-  const processing = DOCUMENTS.filter(d => d.status === "Processing").length;
-  const errors     = DOCUMENTS.filter(d => d.status === "Error").length;
+  // Handle View Document action
+  const handleViewDocument = (doc: DocumentRecord) => {
+    if (doc.fileType !== "PDF") {
+      alert(`Inline preview is only supported for PDF documents. "${doc.fileName}" is a ${doc.fileType} file.`);
+      return;
+    }
+    const viewUrl = `${API_BASE}/documents/${encodeURIComponent(doc.fileName)}/view`;
+    window.open(viewUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const pageRows = useMemo(
+    () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [filtered, page]
+  );
+
+  // Dynamic KPI summary from real documents
+  const total = documents.length;
+  const processed = documents.filter(d => d.status === "Processed").length;
+  const processing = documents.filter(d => d.status === "Processing").length;
+  const errors = documents.filter(d => d.status === "Error").length;
 
   return (
     <AdminLayout title="Document Library">
@@ -218,10 +328,10 @@ export const DocumentLibrary: React.FC = () => {
         </div>
 
         <div className="dl-filters-row">
-          <FilterSelect id="dl-source" label="Source"    value={filterSource} options={DOC_SOURCES}                          onChange={handleSource} />
-          <FilterSelect id="dl-drug"   label="Drug"      value={filterDrug}   options={DOC_DRUGS}                            onChange={handleDrug}   />
-          <FilterSelect id="dl-type"   label="File Type" value={filterType}   options={DOC_FILETYPES}                        onChange={handleType}   />
-          <FilterSelect id="dl-status" label="Status"    value={filterStatus} options={DOC_STATUSES}                         onChange={handleStatus} />
+          <FilterSelect id="dl-source" label="Source" value={filterSource} options={docSources} onChange={handleSource} />
+          <FilterSelect id="dl-drug" label="Drug" value={filterDrug} options={docDrugs} onChange={handleDrug} />
+          <FilterSelect id="dl-type" label="File Type" value={filterType} options={docFileTypes} onChange={handleType} />
+          <FilterSelect id="dl-status" label="Status" value={filterStatus} options={docStatuses} onChange={handleStatus} />
 
           {hasFilters && (
             <button className="dl-clear-btn" type="button" onClick={clearFilters}>
@@ -266,11 +376,37 @@ export const DocumentLibrary: React.FC = () => {
 
       {/* ── Document Table ── */}
       <div className="admin-card dl-table-card">
-        {filtered.length === 0 ? (
+        {loading ? (
+          <div className="dl-empty" style={{ padding: "40px 20px" }}>
+            <Loader2 size={32} className="up-spin" style={{ color: "#3b82f6", marginBottom: "12px" }} />
+            <p className="dl-empty-text">Loading document library from server...</p>
+          </div>
+        ) : error ? (
+          <div className="dl-empty" style={{ padding: "40px 20px" }}>
+            <AlertTriangle size={32} style={{ color: "#ef4444", marginBottom: "12px" }} />
+            <p className="dl-empty-text" style={{ color: "#ef4444" }}>{error}</p>
+            <button
+              className="dl-clear-btn"
+              type="button"
+              onClick={() => fetchSources(filterDrug)}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px", marginTop: "12px" }}
+            >
+              <RefreshCw size={14} /> Retry Loading
+            </button>
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="dl-empty">
             <Search size={30} className="dl-empty-icon" />
-            <p className="dl-empty-text">No documents match your current filters.</p>
-            <button className="dl-clear-btn" type="button" onClick={clearFilters}>Clear Filters</button>
+            <p className="dl-empty-text">
+              {documents.length === 0
+                ? "No ingested documents found in the database."
+                : "No documents match your current filters."}
+            </p>
+            {hasFilters && (
+              <button className="dl-clear-btn" type="button" onClick={clearFilters}>
+                Clear Filters
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -286,7 +422,7 @@ export const DocumentLibrary: React.FC = () => {
                     <th>Source <span className="dl-sort-arrow">↕</span></th>
                     <th>File Type <span className="dl-sort-arrow">↕</span></th>
                     <th>Version <span className="dl-sort-arrow">↕</span></th>
-                    <th>Uploaded On <span className="dl-sort-arrow">↕</span></th>
+                    <th>Uploaded On / Details <span className="dl-sort-arrow">↕</span></th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
@@ -315,7 +451,12 @@ export const DocumentLibrary: React.FC = () => {
                       <td><StatusBadge status={doc.status} /></td>
                       <td>
                         <div className="dl-actions-cell">
-                          <button className="dl-action-btn" title="View document" aria-label="View">
+                          <button
+                            className="dl-action-btn"
+                            title="View document"
+                            aria-label={`View ${doc.fileName}`}
+                            onClick={() => handleViewDocument(doc)}
+                          >
                             <Eye size={15} />
                           </button>
                           <button className="dl-action-btn" title="Download document" aria-label="Download">

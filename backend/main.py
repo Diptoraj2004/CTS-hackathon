@@ -79,6 +79,15 @@ def process_query(req: QueryRequest):
     )
 
 
+import os
+import shutil
+from pathlib import Path
+from fastapi.responses import FileResponse
+
+UPLOAD_DIR = Path("data/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
 @app.post("/ingest")
 async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None = None):
     """Parses and chunks first, scans every chunk for hidden instructions,
@@ -86,15 +95,21 @@ async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None =
     malicious upload can't poison the corpus for every future query.
     Every outcome (accepted or rejected) is audit-logged either way, which
     is the "what was entered vs not processed" notification."""
+    safe_filename = os.path.basename(file.filename)
+    dest_path = UPLOAD_DIR / safe_filename
+    
     suffix = "." + file.filename.rsplit(".", 1)[-1] if "." in file.filename else ""
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
+        content = await file.read()
+        tmp.write(content)
         tmp_path = tmp.name
 
     try:
         chunks = parse_and_chunk(tmp_path, doc_id=doc_id, drug_name=drug_name)
     except Exception as e:
         audit_log.log("INGESTION_FAILED", f"file={file.filename}: {e}")
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         raise HTTPException(status_code=422, detail=f"Could not parse this file: {e}")
 
     flagged = [c for c in chunks if injection_guard.looks_like_injection(c.text)]
@@ -103,14 +118,56 @@ async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None =
             "INGESTION_REJECTED",
             f"file={file.filename}: {len(flagged)} of {len(chunks)} chunks flagged, whole document rejected",
         )
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         raise HTTPException(
             status_code=422,
             detail=f"Document rejected: {len(flagged)} section(s) failed a safety check.",
         )
 
+    # Save to persistent UPLOAD_DIR upon acceptance
+    try:
+        with open(dest_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        audit_log.log("STORAGE_FAILED", f"file={file.filename}: {e}")
+
+    if os.path.exists(tmp_path):
+        os.remove(tmp_path)
+
     n = store_chunks(chunks)
     audit_log.log("INGESTION_ACCEPTED", f"file={file.filename}: {n} chunks stored")
     return {"status": "ACCEPTED", "filename": file.filename, "chunks_stored": n}
+
+
+@app.get("/documents/{filename}/view")
+def view_document(filename: str):
+    """Safely serves uploaded documents for viewing in the browser (e.g. PDFs inline)."""
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
+
+    # Prevent path traversal attacks
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve())):
+        audit_log.log("UNAUTHORIZED_FILE_ACCESS", f"attempted_file={safe_filename}")
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
+    if ext == "pdf":
+        media_type = "application/pdf"
+    elif ext == "xml":
+        media_type = "application/xml"
+    else:
+        raise HTTPException(status_code=400, detail="Preview for this file type is not supported.")
+
+    audit_log.log("DOCUMENT_VIEWED", f"filename={safe_filename}")
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+    )
 
 
 @app.get("/sources")
