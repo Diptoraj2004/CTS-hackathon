@@ -15,12 +15,12 @@ import { mockAuth } from "../auth/mockAuth";
 
 // ── Admin Sidebar Navigation Items ───────────────────────────────────────────
 const NAV_ITEMS = [
-  { to: "/admin",           label: "Dashboard",          icon: LayoutDashboard, end: true },
-  { to: "/admin/library",   label: "Document Library",   icon: BookOpen        },
-  { to: "/admin/upload",    label: "Upload / Processing",icon: UploadCloud     },
-  { to: "/admin/audit",     label: "Audit Logs",         icon: ScrollText      },
-  { to: "/admin/integrity", label: "Verify Integrity",   icon: ShieldCheck     },
-  { to: "/admin/support",   label: "Human Support",      icon: Headphones      },
+  { to: "/admin", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/admin/library", label: "Document Library", icon: BookOpen },
+  { to: "/admin/upload", label: "Upload / Processing", icon: UploadCloud },
+  { to: "/admin/audit", label: "Audit Logs", icon: ScrollText },
+  { to: "/admin/integrity", label: "Verify Integrity", icon: ShieldCheck },
+  { to: "/admin/support", label: "Human Support", icon: Headphones },
 ];
 
 interface AdminLayoutProps {
@@ -49,17 +49,27 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => 
       {/* ── Sidebar ── */}
       <aside className="admin-sidebar">
         {/* Brand */}
-        <div className="admin-sidebar-brand">
+        <button
+          type="button"
+          className="admin-sidebar-brand"
+          onClick={() => navigate("/admin")}
+          aria-label="Go to Admin Dashboard"
+        >
           <div className="admin-brand-mark" aria-hidden="true">
             <div className="admin-brand-pill admin-brand-pill-a" />
             <div className="admin-brand-pill admin-brand-pill-b" />
             <div className="admin-brand-pill admin-brand-pill-c" />
           </div>
+
           <div className="admin-brand-text">
-            <span className="admin-brand-name">DrugDoc <b>AI</b></span>
-            <span className="admin-brand-sub">Better Information. Healthier Decisions.</span>
+            <span className="admin-brand-name">
+              DrugDoc <b>AI</b>
+            </span>
+            <span className="admin-brand-sub">
+              Better Information. Healthier Decisions.
+            </span>
           </div>
-        </div>
+        </button>
 
         <div className="admin-panel-label">ADMIN PANEL</div>
 
