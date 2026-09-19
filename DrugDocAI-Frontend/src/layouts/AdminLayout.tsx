@@ -18,8 +18,6 @@ const NAV_ITEMS = [
   { to: "/admin/library", label: "Document Library", icon: BookOpen },
   { to: "/admin/upload", label: "Upload / Processing", icon: UploadCloud },
   { to: "/admin/audit", label: "Audit Logs", icon: ScrollText },
-  { to: "/admin/integrity", label: "Verify Integrity", icon: ShieldCheck },
-  { to: "/admin/support", label: "Human Support", icon: Headphones },
 ];
 
 interface AdminLayoutProps {
