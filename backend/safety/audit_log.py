@@ -1,9 +1,18 @@
 """Tamper-evident audit log. Each entry stores a hash of the entry before it
 (same idea as a git commit chain), so editing anything after the fact breaks
-the chain and verify() catches it. No blockchain needed for that property."""
+the chain and verify() catches it. No blockchain needed for that property.
+
+Right-to-erasure note: a hash chain can't support editing or deleting a past
+entry without registering as tampering — that's the whole point of it. So
+"delete a user's data but keep the audit trail" only works if raw PII never
+enters the log in the first place. log() redacts `details` itself, on top of
+whatever the caller already redacted, so this can't be forgotten at a call site.
+"""
 import hashlib
 import json
 import time
+
+from backend.safety.redaction import redact
 
 
 class AuditLog:
@@ -26,7 +35,7 @@ class AuditLog:
         return entry
 
     def log(self, event_type: str, details: str) -> dict:
-        return self._append(event_type, details, self._chain[-1]["hash"])
+        return self._append(event_type, redact(details), self._chain[-1]["hash"])
 
     def verify(self) -> tuple[bool, str]:
         for i in range(1, len(self._chain)):

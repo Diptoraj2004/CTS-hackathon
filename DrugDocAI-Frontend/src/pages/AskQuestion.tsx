@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
-import { getMockRagResponse } from "../data/ragService";
+import { getRagResponse, RagResponse } from "../data/ragService";
 
 // ── Static drug metadata ──────────────────────────────────────────────────────
 const DRUG_META: Record<
@@ -155,10 +155,47 @@ export const AskQuestion: React.FC = () => {
     }
   }, []);
 
-  // Retrieve mock RAG data, risk level and confidence level
-  const ragData = activeQuestion
-    ? getMockRagResponse(activeQuestion, drug, mode, explicitRisk, explicitConfidence)
-    : null;
+  // Retrieve real RAG data from the backend for the active question
+  const [ragData, setRagData] = useState<RagResponse | null>(null);
+  const [isFetching, setIsFetching] = useState(false);
+
+  useEffect(() => {
+    if (!activeQuestion) {
+      setRagData(null);
+      return;
+    }
+    let cancelled = false;
+    setIsFetching(true);
+    getRagResponse(activeQuestion, drug, mode)
+      .then((data) => {
+        if (!cancelled) setRagData(data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRagData({
+            question: activeQuestion,
+            medication: drug,
+            mode,
+            risk_level: "normal",
+            answerLead: "Something went wrong reaching DrugDoc AI's backend.",
+            bulletPoints: [],
+            answerFollowUp: "Please check your connection and try again.",
+            disclaimer:
+              "This information is from official medical sources and is not a substitute for professional medical advice.",
+            confidence: "Low",
+            confidenceDetail: "Backend request failed.",
+            sources: [],
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsFetching(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeQuestion, drug, mode]);
+
   const isHighRisk = ragData?.risk_level === "high";
   const isLowConfidence = !isHighRisk && (ragData?.confidence === "Low" || ragData?.confidence === "low");
 
@@ -172,15 +209,13 @@ export const AskQuestion: React.FC = () => {
     }
   }, [activeQuestion, drug]);
 
-  // F-04 Answer state
+  // F-04 Answer state — reflects the real fetch, not a fixed fake delay
   const [answerState, setAnswerState] = useState<"typing" | "revealed">("typing");
   useEffect(() => {
     if (activeQuestion && !isHighRisk && !isLowConfidence) {
-      setAnswerState("typing");
-      const t = setTimeout(() => setAnswerState("revealed"), 1250);
-      return () => clearTimeout(t);
+      setAnswerState(isFetching ? "typing" : "revealed");
     }
-  }, [activeQuestion, isHighRisk, isLowConfidence]);
+  }, [activeQuestion, isHighRisk, isLowConfidence, isFetching]);
 
   // Input, timestamp and escalation feedback states
   const [inputValue, setInputValue] = useState("");

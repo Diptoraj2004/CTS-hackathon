@@ -15,6 +15,17 @@ class Chunk(BaseModel):
     source_file: str                # e.g. "metformin_label.pdf"
     page: Optional[int] = None
     version: Optional[str] = None
+    # Extended metadata from the ingestion pipeline (Suman) — all optional so
+    # existing code that only reads the fields above keeps working unchanged.
+    document_id: Optional[str] = None
+    set_id: Optional[str] = None
+    active_ingredient: Optional[str] = None
+    subsection: Optional[str] = None
+    source_type: Optional[str] = None       # "pdf" / "xml" / "ocr"
+    source_identifier: Optional[str] = None
+    effective_date: Optional[str] = None    # for detecting superseded label versions
+    ingestion_timestamp: Optional[str] = None
+    extraction_method: Optional[str] = None
 
 
 class RetrievedChunk(BaseModel):

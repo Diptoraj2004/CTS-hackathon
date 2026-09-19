@@ -1,0 +1,56 @@
+import pymupdf as fitz  # PyMuPDF (new import name; fitz alias kept so the rest of the file is unchanged)
+from backend.app.models import Page, ParsedDocument, DocumentMetadata
+from backend.app.ingestion.ocr import is_poor_extraction, run_ocr
+import datetime
+import os
+
+class PDFParser:
+    def __init__(self, use_ocr: bool = True):
+        self.use_ocr = use_ocr
+
+    def parse(self, file_path: str, doc_id: str, drug_name: str) -> ParsedDocument:
+        """
+        Parse a PDF file page by page.
+        Applies OCR fallback if extraction quality is poor.
+        """
+        doc = fitz.open(file_path)
+        pages = []
+        
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            text = page.get_text()
+            
+            extraction_method = "pdf_text"
+            
+            if self.use_ocr and is_poor_extraction(text):
+                # Need OCR fallback
+                pix = page.get_pixmap(dpi=300)
+                image_bytes = pix.tobytes("png")
+                ocr_result = run_ocr(image_bytes, page_number=page_num + 1)
+                
+                if ocr_result.success and len(ocr_result.text.strip()) > 0:
+                    text = ocr_result.text
+                    extraction_method = "ocr"
+                else:
+                    text = "" # Fallback failed or empty
+            
+            pages.append(Page(
+                page_number=page_num + 1,
+                text=text,
+                extraction_method=extraction_method
+            ))
+            
+        metadata = DocumentMetadata(
+            document_id=doc_id,
+            set_id="unknown",
+            drug_name=drug_name,
+            active_ingredient="unknown",
+            label_version="unknown",
+            effective_date="unknown",
+            ingestion_timestamp=datetime.datetime.utcnow().isoformat(),
+            source_file=os.path.basename(file_path),
+            source_type="pdf",
+            source_identifier=os.path.basename(file_path)
+        )
+        
+        return ParsedDocument(metadata=metadata, pages=pages, sections=[])
