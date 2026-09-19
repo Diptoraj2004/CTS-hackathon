@@ -3,3 +3,4 @@
 fastapi
 uvicorn[standard]
 -r backend/app/requirements.txt
+-r backend/app/requirements.txt
