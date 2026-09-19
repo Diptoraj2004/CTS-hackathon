@@ -7,7 +7,7 @@ from backend.app.embeddings.embedder import Embedder
 def test_pipeline_end_to_end(test_pdf_path, test_xml_path, monkeypatch, tmp_path):
     test_db_dir = os.path.join(tmp_path, "vector_db")
     
-    import app.embeddings.vector_store as vs_module
+    import backend.app.embeddings.vector_store as vs_module
     import app.metadata.versioning as vm_module
     
     original_vs_init = vs_module.VectorStore.__init__
