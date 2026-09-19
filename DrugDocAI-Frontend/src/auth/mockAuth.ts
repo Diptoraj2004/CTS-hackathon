@@ -2,7 +2,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: "patient" | "admin";
+  role: "patient" | "admin" | "user";
 }
 
 export interface AuthResponse {
@@ -37,7 +37,43 @@ export const mockAuth = {
       id: role === "admin" ? "adm_" + Math.random().toString(36).substring(2, 9) : "usr_" + Math.random().toString(36).substring(2, 9),
       email: identifier.includes("@") ? identifier : `${identifier}@drugdoc.ai`,
       name: identifier.split("@")[0],
-      role: role === "admin" ? "admin" : "patient",
+      role: role === "admin" ? "admin" : "user",
+    };
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
+    return { success: true, user };
+  },
+
+  register: async (
+    name: string,
+    email: string,
+    password?: string
+  ): Promise<AuthResponse> => {
+    // Simulated async delay
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    if (!name || name.trim().length === 0) {
+      return { success: false, error: "Please enter your full name." };
+    }
+
+    if (!email || email.trim().length === 0) {
+      return { success: false, error: "Please enter your email address." };
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email.trim())) {
+      return { success: false, error: "Please enter a valid email address." };
+    }
+
+    if (!password || password.length < 8) {
+      return { success: false, error: "Password must be at least 8 characters long." };
+    }
+
+    const user: User = {
+      id: "usr_" + Math.random().toString(36).substring(2, 9),
+      email: email.trim(),
+      name: name.trim(),
+      role: "user",
     };
 
     localStorage.setItem(STORAGE_KEY, JSON.stringify(user));

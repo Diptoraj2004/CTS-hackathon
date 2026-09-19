@@ -8,9 +8,8 @@ import {
   ShieldCheck,
   Headphones,
   LogOut,
-  ChevronDown,
-  Bell,
 } from "lucide-react";
+import { NotificationDropdown } from "../components/admin/NotificationDropdown";
 import { mockAuth } from "../auth/mockAuth";
 
 // ── Admin Sidebar Navigation Items ───────────────────────────────────────────
@@ -118,14 +117,10 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => 
               <span className="admin-datetime-date">{dateStr}</span>
               <span className="admin-datetime-time">{timeStr}</span>
             </div>
-            <button className="admin-notif-btn" aria-label="Notifications">
-              <Bell size={18} />
-              <span className="admin-notif-dot" aria-hidden="true" />
-            </button>
+            <NotificationDropdown />
             <div className="admin-user-pill">
               <span className="admin-user-avatar">A</span>
               <span className="admin-user-name">{userName.charAt(0).toUpperCase() + userName.slice(1)}</span>
-              <ChevronDown size={14} />
             </div>
             <button className="admin-logout-btn" onClick={handleLogout} aria-label="Sign out" title="Sign out">
               <LogOut size={16} />

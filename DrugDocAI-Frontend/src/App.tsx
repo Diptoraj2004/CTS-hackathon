@@ -4,7 +4,10 @@ import { Landing } from "./pages/Landing";
 import { MedicationSelect } from "./pages/MedicationSelect";
 import { Login } from "./pages/Login";
 import { AskQuestion } from "./pages/AskQuestion";
+import { SourcesEvidence } from "./pages/SourcesEvidence";
+import { MedicationInfo } from "./pages/MedicationInfo";
 import { ResultsPlaceholder } from "./pages/ResultsPlaceholder";
+import { ProfilePlaceholder } from "./pages/ProfilePlaceholder";
 import { AdminDashboard } from "./pages/admin/AdminDashboard";
 import { AdminPlaceholderPage } from "./pages/admin/AdminPlaceholderPage";
 import { DocumentLibrary } from "./pages/admin/DocumentLibrary";
@@ -19,7 +22,10 @@ function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/select" element={<MedicationSelect />} />
       <Route path="/results" element={<AskQuestion />} />
+      <Route path="/sources" element={<SourcesEvidence />} />
+      <Route path="/medication-info" element={<MedicationInfo />} />
       <Route path="/docs" element={<ResultsPlaceholder />} />
+      <Route path="/profile" element={<ProfilePlaceholder />} />
 
       {/* ── Admin flow ── */}
       <Route path="/admin" element={<AdminDashboard />} />

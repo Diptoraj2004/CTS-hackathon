@@ -1,6 +1,7 @@
 import React from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowRight, Lock, ShieldCheck, Pill, ChevronDown, Home } from "lucide-react";
+import { ArrowRight, Lock, ShieldCheck, Pill, Home } from "lucide-react";
+import { UserAccountDropdown } from "./UserAccountDropdown";
 
 interface HeaderProps {
   showAvatar?: boolean;
@@ -71,10 +72,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Home size={15} /> Back to Home
         </button>
       ) : showAvatar ? (
-        <div className="user-avatar-pill">
-          <span className="avatar-circle">A</span>
-          <ChevronDown size={14} className="avatar-chevron" />
-        </div>
+        <UserAccountDropdown />
       ) : (
         <button
           className="button button-primary navbar-btn"

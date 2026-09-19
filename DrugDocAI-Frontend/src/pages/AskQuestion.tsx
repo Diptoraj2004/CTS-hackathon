@@ -840,7 +840,13 @@ export const AskQuestion: React.FC = () => {
               </div>
             </div>
 
-            <button className="f03-info-link" type="button">
+            <button
+              className="f03-info-link"
+              type="button"
+              onClick={() =>
+                navigate(`/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`)
+              }
+            >
               View full drug information <ArrowRight size={13} />
             </button>
           </div>
@@ -885,7 +891,11 @@ export const AskQuestion: React.FC = () => {
                     <span className="f04-source-number">{src.id}</span>
                     <div className="f04-source-details">
                       <strong className="f04-source-name">{src.name}</strong>
-                      <button className="f04-source-link" type="button">
+                      <button
+                        className="f04-source-link"
+                        type="button"
+                        onClick={() => navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`)}
+                      >
                         Access data <ArrowRight size={12} />
                       </button>
                     </div>
@@ -893,7 +903,12 @@ export const AskQuestion: React.FC = () => {
                 ))}
               </div>
 
-              <button className="f03-info-link" type="button" style={{ marginTop: "12px" }}>
+              <button
+                className="f03-info-link"
+                type="button"
+                style={{ marginTop: "12px" }}
+                onClick={() => navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`)}
+              >
                 View all sources <ArrowRight size={13} />
               </button>
             </div>
