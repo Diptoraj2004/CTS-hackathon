@@ -8,23 +8,33 @@ on the query, retrieved chunks, AND ingested documents; a mode-consistency
 check; PII/PHI redaction on the final answer (and on everything that reaches
 the audit log — see audit_log.py); rate limiting; and a hash-chained audit
 trail. Every escalation lands in the same human review queue.
+
+/ingest runs its pipeline on a background thread and returns a job_id
+immediately — see ingest_jobs.py for why (short version: the old
+synchronous version was the actual cause of the slow-ingestion/500-over-
+the-tunnel/lost-on-reload symptoms, not something separate from them).
 """
+import os
 import tempfile
+import threading
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from backend.app.ingestion.export_to_rag_store import parse_and_chunk, store_chunks
+from backend.ingest_jobs import create_job, get_job, update_job
 from backend.rag import query_understanding, retriever
 from backend.rag.pipeline import answer as rag_answer
-from backend.rag.vector_store import get_table
+from backend.rag.vector_store import get_embedder, get_table
 from backend.safety import gate_router, injection_guard, redaction
 from backend.safety.audit_log import AuditLog
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
 from backend.safety.schemas import ChatbotResponse, QueryRequest
 
-app = FastAPI(title="DrugDocQA Core API", version="0.4")
+app = FastAPI(title="DrugDocQA Core API", version="0.5")
 
 app.add_middleware(RateLimitMiddleware)
 
@@ -40,6 +50,18 @@ app.add_middleware(
 
 audit_log = AuditLog()
 review_queue = HumanReviewQueue(audit_log)
+
+UPLOAD_DIR = Path("data/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@app.on_event("startup")
+def _warm_up_embedder():
+    """Load the sentence-transformers model once at boot instead of on the
+    first real request. A cold load can take 10-60s on a fresh Colab
+    runtime — pay that cost here, not on someone's first /query or /ingest
+    call during the demo."""
+    get_embedder()
 
 
 def _escalate(query: str, mode: str, reason: str) -> ChatbotResponse:
@@ -60,7 +82,9 @@ def process_query(req: QueryRequest):
     if needs_review:
         return _escalate(req.query, req.mode, reason)
 
-    info = query_understanding.understand(req.query, mode=req.mode, session_id=req.session_id)
+    info = query_understanding.understand(
+        req.query, mode=req.mode, session_id=req.session_id, drug_hint=req.drug_name,
+    )
     retrieved = retriever.retrieve(info.standalone_query, info.drug_names, sections=info.section_hints)
     if any(injection_guard.looks_like_injection(r.chunk.text) for r in retrieved):
         audit_log.log("INJECTION_BLOCKED_IN_CORPUS", info.standalone_query[:200])
@@ -79,65 +103,73 @@ def process_query(req: QueryRequest):
     )
 
 
-import os
-import shutil
-from pathlib import Path
-from fastapi.responses import FileResponse
+def _run_ingestion(job_id: str, tmp_path: str, safe_filename: str, orig_filename: str,
+                    content: bytes, drug_name: str, doc_id: str | None) -> None:
+    """Runs on a background thread, off the request/response cycle entirely
+    — a slow OCR pass or a cold embedding-model load here no longer blocks
+    /query traffic for anyone else, and no longer risks a tunnel/proxy
+    timing the HTTP request out."""
+    try:
+        update_job(job_id, stage="PARSING", detail="Parsing and chunking the document.")
+        chunks = parse_and_chunk(tmp_path, doc_id=doc_id, drug_name=drug_name)
+        update_job(job_id, chunks_found=len(chunks))
 
-UPLOAD_DIR = Path("data/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        update_job(job_id, stage="SCANNING", detail="Scanning chunks for hidden instructions.")
+        flagged = [c for c in chunks if injection_guard.looks_like_injection(c.text)]
+        if flagged:
+            detail = f"{len(flagged)} of {len(chunks)} section(s) failed a safety check."
+            audit_log.log("INGESTION_REJECTED", f"file={orig_filename}: {detail}")
+            update_job(job_id, stage="REJECTED", detail=detail, error=detail)
+            return
+
+        try:
+            (UPLOAD_DIR / safe_filename).write_bytes(content)
+        except Exception as e:
+            audit_log.log("STORAGE_FAILED", f"file={orig_filename}: {e}")
+
+        update_job(job_id, stage="EMBEDDING", detail="Embedding chunks and writing to the vector store.")
+        n = store_chunks(chunks)
+
+        audit_log.log("INGESTION_ACCEPTED", f"file={orig_filename}: {n} chunks stored")
+        update_job(job_id, stage="STORED", detail=f"Stored {n} chunk(s).", chunks_stored=n)
+    except Exception as e:
+        audit_log.log("INGESTION_FAILED", f"file={orig_filename}: {e}")
+        update_job(job_id, stage="FAILED", detail="Ingestion failed.", error=str(e))
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 @app.post("/ingest")
 async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None = None):
-    """Parses and chunks first, scans every chunk for hidden instructions,
-    and only writes to the shared store if nothing was flagged — so a
-    malicious upload can't poison the corpus for every future query.
-    Every outcome (accepted or rejected) is audit-logged either way, which
-    is the "what was entered vs not processed" notification."""
+    """Accepts the upload, writes it to a temp file, and hands the real
+    parse -> scan -> embed pipeline to a background thread — returns a
+    job_id almost immediately instead of holding the request open for the
+    full pipeline. Poll GET /ingest/{job_id}/status for progress; store the
+    job_id client-side (e.g. localStorage) so a page reload just resumes
+    polling instead of losing track of the upload."""
     safe_filename = os.path.basename(file.filename)
-    dest_path = UPLOAD_DIR / safe_filename
-    
     suffix = "." + file.filename.rsplit(".", 1)[-1] if "." in file.filename else ""
+    content = await file.read()
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
         tmp.write(content)
         tmp_path = tmp.name
 
-    try:
-        chunks = parse_and_chunk(tmp_path, doc_id=doc_id, drug_name=drug_name)
-    except Exception as e:
-        audit_log.log("INGESTION_FAILED", f"file={file.filename}: {e}")
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise HTTPException(status_code=422, detail=f"Could not parse this file: {e}")
+    job = create_job(filename=file.filename, drug_name=drug_name, doc_id=doc_id)
+    threading.Thread(
+        target=_run_ingestion,
+        args=(job["job_id"], tmp_path, safe_filename, file.filename, content, drug_name, doc_id),
+        daemon=True,
+    ).start()
+    return {"job_id": job["job_id"], "status": "QUEUED"}
 
-    flagged = [c for c in chunks if injection_guard.looks_like_injection(c.text)]
-    if flagged:
-        audit_log.log(
-            "INGESTION_REJECTED",
-            f"file={file.filename}: {len(flagged)} of {len(chunks)} chunks flagged, whole document rejected",
-        )
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise HTTPException(
-            status_code=422,
-            detail=f"Document rejected: {len(flagged)} section(s) failed a safety check.",
-        )
 
-    # Save to persistent UPLOAD_DIR upon acceptance
-    try:
-        with open(dest_path, "wb") as f:
-            f.write(content)
-    except Exception as e:
-        audit_log.log("STORAGE_FAILED", f"file={file.filename}: {e}")
-
-    if os.path.exists(tmp_path):
-        os.remove(tmp_path)
-
-    n = store_chunks(chunks)
-    audit_log.log("INGESTION_ACCEPTED", f"file={file.filename}: {n} chunks stored")
-    return {"status": "ACCEPTED", "filename": file.filename, "chunks_stored": n}
+@app.get("/ingest/{job_id}/status")
+def ingest_status(job_id: str):
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown job id")
+    return job
 
 
 @app.get("/documents/{filename}/view")
@@ -201,10 +233,9 @@ def forget_session(session_id: str):
     state — the audit log is intentionally untouched (see audit_log.py for
     why: it's designed to never hold raw PII in the first place, so there's
     nothing sensitive in it to remove)."""
-    # TODO(soumya): query_understanding's session memory needs a
-    # forget(session_id) function exposed — nothing to call yet.
+    cleared = query_understanding.forget(session_id)
     audit_log.log("SESSION_ERASURE_REQUESTED", f"session={session_id}")
-    return {"status": "ACKNOWLEDGED", "note": "session memory clear pending query_understanding.forget()"}
+    return {"status": "ACKNOWLEDGED", "cleared": cleared}
 
 
 @app.get("/review/pending")

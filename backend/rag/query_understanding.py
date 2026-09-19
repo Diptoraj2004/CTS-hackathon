@@ -1,4 +1,4 @@
-﻿"""Query understanding: drug extraction, follow-up resolution (LangChain memory),
+"""Query understanding: drug extraction, follow-up resolution (LangChain memory),
 and section hints, producing a standalone query for retrieval."""
 import difflib
 import re
@@ -31,6 +31,14 @@ def get_history(session_id: str) -> InMemoryChatMessageHistory:
     return _sessions.setdefault(session_id, InMemoryChatMessageHistory())
 
 
+def forget(session_id: str) -> bool:
+    """Right-to-erasure: drop a session's conversational memory entirely.
+    Returns True if a session existed and was cleared, False if there was
+    nothing to clear (already gone / never existed). Called by
+    DELETE /session/{session_id} in main.py."""
+    return _sessions.pop(session_id, None) is not None
+
+
 def known_drugs() -> list[str]:
     """Drug names that actually exist in the vector store."""
     table = get_table()
@@ -48,6 +56,19 @@ def extract_drugs(query: str, known: list[str]) -> list[str]:
             if match and match[0] not in found:
                 found.append(match[0])
     return found
+
+
+def resolve_drug_hint(drug_hint: str, known: list[str]) -> list[str]:
+    """Turn a frontend-supplied drug name (e.g. from a dropdown) into a
+    canonical name from the vector store, if it matches one. Only used as
+    a fallback when the query text itself didn't mention a drug name."""
+    h = drug_hint.strip().lower()
+    if not h:
+        return []
+    if h in known:
+        return [h]
+    match = difflib.get_close_matches(h, known, n=1, cutoff=0.6)
+    return match
 
 
 def previous_drugs(history: InMemoryChatMessageHistory) -> list[str]:
@@ -68,9 +89,18 @@ def section_hints(query: str) -> tuple[list[str], list[str]]:
     return sections, expansions
 
 
-def understand(query: str, mode: Mode, session_id: str = "default") -> QueryInfo:
+def understand(query: str, mode: Mode, session_id: str = "default",
+               drug_hint: str | None = None) -> QueryInfo:
+    """drug_hint: optional drug name from the frontend (e.g. a dropdown
+    selection). Only used when the query text itself contains no drug name
+    and there's no prior turn to fall back on — explicit mentions in the
+    query always win, since the user may be asking about a different drug
+    than the one they last selected."""
     history = get_history(session_id)
-    drugs = extract_drugs(query, known_drugs())
+    known = known_drugs()
+    drugs = extract_drugs(query, known)
+    if not drugs and drug_hint:
+        drugs = resolve_drug_hint(drug_hint, known)
     if not drugs:
         drugs = previous_drugs(history)  # follow-up: reuse drug from earlier turn
 

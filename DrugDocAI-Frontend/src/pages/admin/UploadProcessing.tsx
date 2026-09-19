@@ -23,6 +23,7 @@ import {
 import { AdminLayout } from "../../layouts/AdminLayout";
 const API_BASE =
   import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,6 +41,26 @@ interface ProcessingDetail {
   done: boolean;
 }
 
+// Backend job shape from GET /ingest/{job_id}/status
+interface IngestJob {
+  job_id: string;
+  filename: string;
+  drug_name: string;
+  stage: "QUEUED" | "PARSING" | "SCANNING" | "EMBEDDING" | "STORED" | "REJECTED" | "FAILED";
+  detail: string;
+  chunks_found: number | null;
+  chunks_stored: number | null;
+  error: string | null;
+}
+
+// A job still being tracked across a page reload — just enough to resume
+// polling without needing the original File object (which reload destroys).
+interface TrackedJob {
+  jobId: string;
+  fileName: string;
+}
+const STORAGE_KEY = "dip_ingest_active_jobs";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline stage definitions (static, UI-only)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,18 +73,8 @@ const PIPELINE_STAGES: PipelineStage[] = [
   { id: "ready",    step: 6, label: "Ready",      icon: <CheckCircle2 size={20}/> },
 ];
 
-// Details messages emitted as each stage completes
-const DETAIL_STEPS: ProcessingDetail[] = [
-  { text: "File uploaded successfully",  done: true  },
-  { text: "File validated (no corruption detected)", done: true  },
-  { text: "Format detected: PDF document",  done: true  },
-  { text: "OCR performed on scanned pages", done: true  },
-  { text: "Text extracted successfully",    done: true  },
-  { text: "Indexing…",                      done: false },
-  { text: "Document indexed and ready",     done: true  },
-];
-
-// Stage durations in ms (purely cosmetic simulation)
+// Stage durations in ms (purely cosmetic simulation) — unused now that
+// progress comes from real polling, kept only in case it's needed elsewhere.
 const STAGE_DURATIONS_MS = [800, 700, 600, 1200, 900, 500];
 
 // Helper to format bytes
@@ -72,6 +83,70 @@ const formatSize = (bytes: number): string => {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 };
+
+// Maps a real backend ingest stage onto the six cosmetic UI stages.
+const stagesForBackendStage = (
+  stage: IngestJob["stage"],
+): Record<string, StageStatus> => {
+  switch (stage) {
+    case "QUEUED":
+      return { upload: "complete", validate: "processing", detect: "pending", parse: "pending", index: "pending", ready: "pending" };
+    case "PARSING":
+      return { upload: "complete", validate: "complete", detect: "complete", parse: "processing", index: "pending", ready: "pending" };
+    case "SCANNING":
+      return { upload: "complete", validate: "complete", detect: "complete", parse: "complete", index: "processing", ready: "pending" };
+    case "EMBEDDING":
+      return { upload: "complete", validate: "complete", detect: "complete", parse: "complete", index: "processing", ready: "pending" };
+    case "STORED":
+      return { upload: "complete", validate: "complete", detect: "complete", parse: "complete", index: "complete", ready: "complete" };
+    case "REJECTED":
+    case "FAILED":
+      return { upload: "complete", validate: "failed", detect: "failed", parse: "failed", index: "failed", ready: "failed" };
+    default:
+      return { upload: "pending", validate: "pending", detect: "pending", parse: "pending", index: "pending", ready: "pending" };
+  }
+};
+
+const TERMINAL_STAGES = new Set(["STORED", "REJECTED", "FAILED"]);
+
+// Poll GET /ingest/{job_id}/status until the job reaches a terminal stage.
+// onUpdate fires on every poll (including the first) so the UI can render
+// intermediate progress, not just the final result.
+async function pollJobUntilDone(
+  jobId: string,
+  onUpdate: (job: IngestJob) => void,
+  intervalMs = 1200,
+): Promise<IngestJob> {
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const res = await fetch(`${API_BASE}/ingest/${jobId}/status`);
+    if (!res.ok) {
+      throw new Error(`Lost track of job ${jobId} (status ${res.status})`);
+    }
+    const job: IngestJob = await res.json();
+    onUpdate(job);
+    if (TERMINAL_STAGES.has(job.stage)) return job;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+function saveTrackedJobs(jobs: TrackedJob[], drugName: string) {
+  if (jobs.length === 0) {
+    localStorage.removeItem(STORAGE_KEY);
+    return;
+  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({ jobs, drugName }));
+}
+
+function loadTrackedJobs(): { jobs: TrackedJob[]; drugName: string } | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sub-components
@@ -131,9 +206,68 @@ export const UploadProcessing: React.FC = () => {
   const [isProcessing, setIsProcessing]   = useState(false);
   const [isDone, setIsDone]               = useState(false);
   const [hasFailed, setHasFailed]         = useState(false);
-  const [revealedDetails, setDetails]     = useState<number>(0); // how many DETAIL_STEPS are revealed
-  const [currentDetailProcessing, setCurrentDetailProcessing] = useState<number | null>(null);
+  const [revealedDetails, setDetails]     = useState<number>(0); // how many detail lines are shown
   const [detailLogs, setDetailLogs]       = useState<ProcessingDetail[]>([]);
+  const [isResuming, setIsResuming]       = useState(false);
+
+  // ── Resume any job(s) still in flight from before a reload ──
+  useEffect(() => {
+    const saved = loadTrackedJobs();
+    if (!saved || saved.jobs.length === 0) return;
+
+    setIsResuming(true);
+    setIsProcessing(true);
+    setDrugName(saved.drugName);
+    setDetailLogs([{ text: `Resuming ${saved.jobs.length} upload(s) from before the reload...`, done: false }]);
+
+    (async () => {
+      const remaining: TrackedJob[] = [...saved.jobs];
+      let anyFailed = false;
+
+      for (const tracked of saved.jobs) {
+        setStageStatuses(initStatuses());
+        try {
+          const finalJob = await pollJobUntilDone(tracked.jobId, (job) => {
+            setStageStatuses(stagesForBackendStage(job.stage));
+            setDetailLogs(prev => [
+              ...prev.slice(0, -1),
+              { text: `[${tracked.fileName}] ${job.detail}`, done: TERMINAL_STAGES.has(job.stage) },
+            ]);
+          });
+
+          remaining.shift();
+          saveTrackedJobs(remaining, saved.drugName);
+
+          if (finalJob.stage === "STORED") {
+            setDetailLogs(prev => [...prev, {
+              text: `[${tracked.fileName}] Stored ${finalJob.chunks_stored ?? 0} chunk(s) in RAG store for "${saved.drugName}"`,
+              done: true,
+            }]);
+          } else {
+            anyFailed = true;
+            setDetailLogs(prev => [...prev, {
+              text: `[${tracked.fileName}] ${finalJob.error ?? "Ingestion did not complete."}`,
+              done: false,
+            }]);
+          }
+        } catch (err: any) {
+          anyFailed = true;
+          remaining.shift();
+          saveTrackedJobs(remaining, saved.drugName);
+          setDetailLogs(prev => [...prev, {
+            text: `[${tracked.fileName}] ${err.message || "Lost track of this upload."}`,
+            done: false,
+          }]);
+        }
+      }
+
+      setIsProcessing(false);
+      setIsResuming(false);
+      if (anyFailed) setHasFailed(true);
+      else setIsDone(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── File addition & management ──
   const addFiles = (newFiles: File[]) => {
@@ -144,7 +278,6 @@ export const UploadProcessing: React.FC = () => {
     setIsDone(false);
     setHasFailed(false);
     setDetails(0);
-    setCurrentDetailProcessing(null);
     setCompletedFileIndices([]);
     setCurrentFileIndex(null);
     setDetailLogs([]);
@@ -174,7 +307,6 @@ export const UploadProcessing: React.FC = () => {
       setIsDone(false);
       setHasFailed(false);
       setDetails(0);
-      setCurrentDetailProcessing(null);
       setCompletedFileIndices([]);
       setCurrentFileIndex(null);
       setDetailLogs([]);
@@ -188,25 +320,29 @@ export const UploadProcessing: React.FC = () => {
     setIsDone(false);
     setHasFailed(false);
     setDetails(0);
-    setCurrentDetailProcessing(null);
     setCompletedFileIndices([]);
     setCurrentFileIndex(null);
     setDetailLogs([]);
   };
 
   // ── Real upload ingestion pipeline ──
+  // Submits each file to /ingest (returns a job_id almost immediately),
+  // then polls /ingest/{job_id}/status instead of holding one fetch open
+  // for the whole parse/scan/embed pipeline. Tracked job_ids are persisted
+  // to localStorage so a page reload mid-upload can resume polling instead
+  // of losing all progress (see the resume effect above).
   const handleUpload = async () => {
     if (files.length === 0 || !drugName.trim() || isProcessing) return;
     setIsProcessing(true);
     setIsDone(false);
     setHasFailed(false);
     setDetails(0);
-    setCurrentDetailProcessing(null);
     setStageStatuses(initStatuses());
     setCompletedFileIndices([]);
     setDetailLogs([]);
 
     const cleanDrugName = drugName.trim();
+    const tracked: TrackedJob[] = [];
 
     for (let fIdx = 0; fIdx < files.length; fIdx++) {
       setCurrentFileIndex(fIdx);
@@ -215,30 +351,22 @@ export const UploadProcessing: React.FC = () => {
       const filePrefix = isMulti ? `[${fIdx + 1}/${files.length} - ${activeFile.name}] ` : "";
 
       setStageStatuses(initStatuses());
-
-      // Stage 1: Uploading
-      setStageStatuses(prev => ({ ...prev, upload: "processing" }));
       setDetailLogs(prev => [
         ...prev,
-        { text: `${filePrefix}Uploading document...`, done: false }
+        { text: `${filePrefix}Uploading document...`, done: false },
       ]);
 
       try {
         const formData = new FormData();
         formData.append("file", activeFile);
 
-        setStageStatuses(prev => ({ ...prev, upload: "complete", validate: "processing", detect: "processing", parse: "processing" }));
-
         const url = `${API_BASE}/ingest?drug_name=${encodeURIComponent(cleanDrugName)}`;
-        const response = await fetch(url, {
-          method: "POST",
-          body: formData,
-        });
+        const submitRes = await fetch(url, { method: "POST", body: formData });
 
-        if (!response.ok) {
-          let errorMsg = `Server returned status ${response.status}`;
+        if (!submitRes.ok) {
+          let errorMsg = `Server returned status ${submitRes.status}`;
           try {
-            const errData = await response.json();
+            const errData = await submitRes.json();
             if (errData && errData.detail) {
               errorMsg = typeof errData.detail === "string" ? errData.detail : JSON.stringify(errData.detail);
             }
@@ -248,18 +376,33 @@ export const UploadProcessing: React.FC = () => {
           throw new Error(errorMsg);
         }
 
-        const result = await response.json();
-        const chunksStored = result.chunks_stored ?? 0;
+        const { job_id } = await submitRes.json();
+        tracked.push({ jobId: job_id, fileName: activeFile.name });
+        saveTrackedJobs(tracked, cleanDrugName);
 
-        setStageStatuses(prev => ({
-          ...prev,
-          validate: "complete",
-          detect: "complete",
-          parse: "complete",
-          index: "complete",
-          ready: "complete"
-        }));
+        setDetailLogs(prev => [
+          ...prev.slice(0, -1),
+          { text: `${filePrefix}Uploaded — processing on the server...`, done: false },
+        ]);
 
+        const finalJob = await pollJobUntilDone(job_id, (job) => {
+          setStageStatuses(stagesForBackendStage(job.stage));
+          setDetailLogs(prev => [
+            ...prev.slice(0, -1),
+            { text: `${filePrefix}${job.detail}`, done: TERMINAL_STAGES.has(job.stage) },
+          ]);
+        });
+
+        // This job is resolved — drop it from the tracked list so a reload
+        // after this point doesn't try to re-poll an already-finished job.
+        tracked.pop();
+        saveTrackedJobs(tracked, cleanDrugName);
+
+        if (finalJob.stage !== "STORED") {
+          throw new Error(finalJob.error || "Ingestion did not complete.");
+        }
+
+        const chunksStored = finalJob.chunks_stored ?? 0;
         setDetailLogs(prev => [
           ...prev.slice(0, -1),
           { text: `${filePrefix}Uploaded successfully`, done: true },
@@ -282,12 +425,14 @@ export const UploadProcessing: React.FC = () => {
           ...prev.slice(0, -1),
           { text: `${filePrefix}Ingestion failed: ${err.message || "Unknown error"}`, done: false },
         ]);
+        saveTrackedJobs(tracked, cleanDrugName);
         setIsProcessing(false);
         setCurrentFileIndex(null);
         return;
       }
     }
 
+    saveTrackedJobs([], cleanDrugName); // batch finished clean — nothing left to resume
     setCurrentFileIndex(null);
     setIsProcessing(false);
     setIsDone(true);
@@ -311,6 +456,14 @@ export const UploadProcessing: React.FC = () => {
 
       {/* ── Page subtitle ── */}
       <p className="up-subtitle">Add verified drug documentation to the DrugDoc AI knowledge base.</p>
+
+      {isResuming && (
+        <div className="admin-card" style={{ marginBottom: "20px", borderLeft: "3px solid #f59e0b" }}>
+          <p style={{ margin: 0, fontSize: "13px" }}>
+            Resuming upload(s) that were still in progress before the page reloaded — no need to re-upload.
+          </p>
+        </div>
+      )}
 
       {/* ── Drug Name Input Card ── */}
       <div className="admin-card" style={{ marginBottom: "20px" }}>
@@ -542,7 +695,7 @@ export const UploadProcessing: React.FC = () => {
             <h2 className="admin-card-title" style={{ marginBottom: 0 }}>Processing Details</h2>
           </div>
 
-          {revealedDetails === 0 && !isProcessing && !hasFailed ? (
+          {revealedDetails === 0 && detailLogs.length === 0 && !isProcessing && !hasFailed ? (
             <div className="up-details-empty">
               <Info size={18} className="up-details-empty-icon" />
               <p className="up-details-empty-text">No document uploaded yet.</p>
@@ -551,21 +704,8 @@ export const UploadProcessing: React.FC = () => {
           ) : (
             <div className="up-details-log">
               {detailLogs.map((d, i) => (
-                <DetailItem key={i} detail={d} />
+                <DetailItem key={i} detail={d} processing={isProcessing && i === detailLogs.length - 1 && !d.done} />
               ))}
-              {isProcessing && currentDetailProcessing !== null && (
-                <DetailItem
-                  detail={
-                    files.length > 1 && currentFileIndex !== null
-                      ? {
-                          ...DETAIL_STEPS[currentDetailProcessing],
-                          text: `[${currentFileIndex + 1}/${files.length} - ${files[currentFileIndex].name}] ${DETAIL_STEPS[currentDetailProcessing].text}`,
-                        }
-                      : DETAIL_STEPS[currentDetailProcessing]
-                  }
-                  processing={true}
-                />
-              )}
               {isDone && (
                 <div className="up-details-done">
                   <CheckCircle2 size={16} className="up-details-done-icon" />
@@ -613,6 +753,3 @@ export const UploadProcessing: React.FC = () => {
     </AdminLayout>
   );
 };
-
-// Tiny async delay helper
-const delay = (ms: number) => new Promise<void>(res => setTimeout(res, ms));

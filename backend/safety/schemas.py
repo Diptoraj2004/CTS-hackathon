@@ -11,6 +11,9 @@ class QueryRequest(BaseModel):
     session_id: str
     query: str = Field(..., min_length=2)
     mode: Mode
+    drug_name: Optional[str] = None  # e.g. a frontend dropdown selection; only
+    # used as a fallback when the query text itself names no drug — see
+    # query_understanding.understand()'s drug_hint parameter.
 
 
 class DocumentUploadRequest(BaseModel):
