@@ -3,7 +3,7 @@ numpy
 groq
 python-dotenv
 pydantic
-lancedb
+lancedb>=0.17.1,<0.40
 pyarrow
 ollama
 langchain-core

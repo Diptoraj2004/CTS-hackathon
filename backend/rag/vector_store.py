@@ -56,6 +56,20 @@ def add_chunks(chunks: list[Chunk]) -> None:
         db.create_table(config.COLLECTION_NAME, data=rows)
 
 
+def delete_by_source_file(source_file: str) -> int:
+    """Removes every chunk belonging to one uploaded document. Returns the
+    row count before deletion (LanceDB's delete() doesn't report a count),
+    so the caller can tell whether anything actually matched."""
+    table = get_table()
+    if table is None:
+        return 0
+    escaped = source_file.replace("'", "''")
+    before = table.count_rows(f"source_file = '{escaped}'")
+    if before:
+        table.delete(f"source_file = '{escaped}'")
+    return before
+
+
 if __name__ == "__main__":
     from backend.rag.sample_chunks import SAMPLE_CHUNKS
 

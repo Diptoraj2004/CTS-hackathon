@@ -4,7 +4,7 @@ lxml>=5.2.1
 pytesseract>=0.3.10
 Pillow>=10.2.0
 sentence-transformers>=2.5.1
-lancedb
+lancedb>=0.17.1,<0.40
 pandas
 pyarrow
 numpy>=1.26.4

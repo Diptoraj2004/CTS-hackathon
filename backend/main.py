@@ -2,12 +2,15 @@
 before it reaches anything below (FastAPI does this automatically) — that's
 the "schema validation gate" from the architecture doc, not a separate module.
 
-Wraps the real RAG pipeline (understand -> retrieve -> relevance gate ->
-generate -> cite -> decide) with the safety spine: prompt-injection scanning
-on the query, retrieved chunks, AND ingested documents; a mode-consistency
-check; PII/PHI redaction on the final answer (and on everything that reaches
-the audit log — see audit_log.py); rate limiting; and a hash-chained audit
-trail. Every escalation lands in the same human review queue.
+Wraps the real RAG pipeline (understand -> retrieve -> injection scan ->
+relevance gate -> generate -> cite -> decide — all in pipeline.answer(), one
+call, see pipeline.py's module docstring for why it used to run twice) with
+the safety spine: prompt-injection scanning on the live query and on
+ingested documents; a mode-consistency check; PII/PHI redaction on the
+final answer (and on everything that reaches the audit log); rate limiting;
+an admin API key on mutating/internal routes; and a hash-chained,
+disk-persisted audit trail. Every escalation lands in the same
+disk-persisted human review queue.
 
 /ingest runs its pipeline on a background thread and returns a job_id
 immediately — see ingest_jobs.py for why.
@@ -16,23 +19,25 @@ import os
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from backend.app.ingestion.export_to_rag_store import parse_and_chunk, store_chunks
 from backend.ingest_jobs import create_job, get_job, update_job
-from backend.rag import query_understanding, retriever
+from backend.rag import query_understanding
 from backend.rag.generator import GenerationError
 from backend.rag.pipeline import answer as rag_answer
-from backend.rag.vector_store import get_embedder, get_table
-from backend.safety import gate_router, injection_guard, redaction
+from backend.rag.vector_store import delete_by_source_file, get_embedder, get_table
+from backend.safety import injection_guard, redaction
 from backend.safety.audit_log import AuditLog
+from backend.safety.auth import require_admin_key
+from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
 from backend.safety.schemas import ChatbotResponse, QueryRequest
 
-app = FastAPI(title="DrugDocQA Core API", version="0.6")
+app = FastAPI(title="DrugDocQA Core API", version="0.7")
 
 app.add_middleware(RateLimitMiddleware)
 
@@ -55,6 +60,10 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # the frontend already says "50 MB max" — this makes it real
 
 
+def _client_ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
 @app.on_event("startup")
 def _warm_up_embedder():
     """Load the sentence-transformers model once at boot instead of on the
@@ -67,14 +76,12 @@ def _warm_up_embedder():
         print(f"[startup] WARNING: PII/PHI redaction is disabled — {status['reason']}")
 
 
-def _escalate(query: str, mode: str, reason: str, risk_level: str) -> ChatbotResponse:
-    """risk_level: 'high' for a mode-consistency/safety gate hit, 'low' for an
-    evidence-quality escalation from the RAG pipeline. Previously this always
-    overwrote `reason` with review_queue's generic "a reviewer has been
-    notified" message — the actual cause (e.g. "clinician-level question in
-    patient mode") never left the server, so the frontend's regex-matching on
-    `reason` could never work. `reason` is now the real reason; risk_level is
-    the machine-readable field the frontend should actually key off of."""
+def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None) -> ChatbotResponse:
+    """risk_level: 'high' for a mode-consistency/safety-gate hit, 'low' for
+    an evidence-quality escalation. `reason` is passed straight through —
+    this used to get overwritten with review_queue's generic "a reviewer
+    has been notified" message, so the actual cause never reached the
+    frontend."""
     result = review_queue.flag(query, mode, reason)
     return ChatbotResponse(
         mode=mode, answer="", status="ESCALATED",
@@ -83,36 +90,35 @@ def _escalate(query: str, mode: str, reason: str, risk_level: str) -> ChatbotRes
 
 
 @app.post("/query", response_model=ChatbotResponse)
-def process_query(req: QueryRequest):
+def process_query(req: QueryRequest, request: Request):
+    ip = _client_ip(request)
+
     if injection_guard.looks_like_injection(req.query):
-        audit_log.log("INJECTION_BLOCKED", req.query[:200])
+        audit_log.log("INJECTION_BLOCKED", req.query[:200], ip=ip)
         raise HTTPException(status_code=400, detail="That query couldn't be processed.")
 
-    needs_review, reason = gate_router.check_mode_consistency(req.query, req.mode)
+    needs_review, reason = check_mode_consistency(req.query, req.mode)
     if needs_review:
-        return _escalate(req.query, req.mode, reason, risk_level="high")
-
-    info = query_understanding.understand(
-        req.query, mode=req.mode, session_id=req.session_id, drug_hint=req.drug_name,
-    )
-    retrieved = retriever.retrieve(info.standalone_query, info.drug_names, sections=info.section_hints)
-    if any(injection_guard.looks_like_injection(r.chunk.text) for r in retrieved):
-        audit_log.log("INJECTION_BLOCKED_IN_CORPUS", info.standalone_query[:200])
-        raise HTTPException(status_code=422, detail="A source document failed a safety check.")
+        return _escalate(req.query, req.mode, reason, risk_level="high", ip=ip)
 
     try:
-        result = rag_answer(req.query, mode=req.mode, session_id=req.session_id)
+        # Single call: understand -> retrieve -> corpus injection scan ->
+        # relevance gate -> generate -> cite, all inside pipeline.answer()
+        # now. Previously main.py ran understand()+retrieve() itself just to
+        # scan retrieved chunks, then rag_answer() ran the exact same two
+        # calls again internally to actually generate — full pipeline twice
+        # per query.
+        result = rag_answer(req.query, mode=req.mode, session_id=req.session_id, drug_hint=req.drug_name)
     except GenerationError as e:
-        # Neither Groq nor Ollama could produce an answer (e.g. Ollama isn't
-        # running and GROQ_API_KEY isn't set). Previously unhandled -> 500.
-        audit_log.log("GENERATION_FAILED", f"session={req.session_id}: {e}")
+        audit_log.log("GENERATION_FAILED", f"session={req.session_id}: {e}", ip=ip)
         raise HTTPException(status_code=503, detail="The answer generator is unavailable right now.")
 
     if result.status == "ESCALATED":
-        return _escalate(req.query, req.mode, result.reason or "insufficient evidence", risk_level="low")
+        return _escalate(req.query, req.mode, result.reason or "insufficient evidence",
+                         risk_level=result.risk_level or "low", ip=ip)
 
     safe_answer = redaction.redact(result.answer)
-    audit_log.log("QUERY_ANSWERED", f"session={req.session_id}")
+    audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip)
     return ChatbotResponse(
         mode=req.mode, answer=safe_answer, citations=result.citations,
         status="APPROVED", confidence=result.confidence,
@@ -136,11 +142,11 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
             detail = f"{len(flagged)} of {len(chunks)} section(s) failed a safety check."
             audit_log.log("INGESTION_REJECTED", f"file={orig_label}: {detail}")
             update_job(job_id, stage="REJECTED", detail=detail, error=detail)
-            stored_path.unlink(missing_ok=True)  # don't keep bytes for a rejected document
+            stored_path.unlink(missing_ok=True)
             return
 
         update_job(job_id, stage="EMBEDDING", detail="Embedding chunks and writing to the vector store.")
-        n = store_chunks(chunks)  # also registers the version metadata now — see export_to_rag_store.py
+        n = store_chunks(chunks)
 
         audit_log.log("INGESTION_ACCEPTED", f"file={orig_label}: {n} chunks stored")
         update_job(job_id, stage="STORED", detail=f"Stored {n} chunk(s).", chunks_stored=n)
@@ -150,24 +156,19 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
         stored_path.unlink(missing_ok=True)
 
 
-@app.post("/ingest")
+@app.post("/ingest", dependencies=[Depends(require_admin_key)])
 async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None = None):
-    """Accepts the upload, writes it straight to its permanent location under
-    a job-id-prefixed, collision-proof filename (previously: a random temp
-    file, whose gibberish name then leaked into every citation and the
-    document viewer, and re-uploading a same-named file just overwrote it),
-    and hands the real parse -> scan -> embed pipeline to a background
-    thread. Returns a job_id almost immediately. Poll
-    GET /ingest/{job_id}/status for progress."""
+    """Requires the admin key (X-Admin-Key header) — previously anyone could
+    call this. Writes the upload straight to its permanent location under a
+    job-id-prefixed, collision-proof filename, and hands the real
+    parse -> scan -> embed pipeline to a background thread. Returns a
+    job_id almost immediately. Poll GET /ingest/{job_id}/status for progress."""
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024*1024)} MB limit.")
 
     safe_filename = os.path.basename(file.filename or "upload")
-    clean_drug_name = drug_name.strip().lower()  # retriever.py filters on drug_name.lower() —
-    # storing anything else here means an uploaded "Paracetamol" can never be
-    # found by a query for "paracetamol". This was the single biggest reason
-    # retrieval could come back empty for a freshly-ingested drug.
+    clean_drug_name = drug_name.strip().lower()
 
     job = create_job(filename=file.filename, drug_name=clean_drug_name, doc_id=doc_id)
     stored_path = UPLOAD_DIR / f"{job['job_id'][:8]}_{safe_filename}"
@@ -191,14 +192,14 @@ def ingest_status(job_id: str):
 
 @app.get("/documents/{filename}/view")
 def view_document(filename: str):
-    """Safely serves uploaded documents for viewing in the browser (e.g. PDFs inline)."""
+    """Public: this is what the patient/clinician-facing citation links open,
+    not an admin action, so it doesn't require the admin key."""
     safe_filename = os.path.basename(filename)
     file_path = (UPLOAD_DIR / safe_filename).resolve()
 
     if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
         audit_log.log("UNAUTHORIZED_FILE_ACCESS", f"attempted_file={safe_filename}")
         raise HTTPException(status_code=403, detail="Access denied.")
-
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Document not found.")
 
@@ -211,24 +212,40 @@ def view_document(filename: str):
         raise HTTPException(status_code=400, detail="Preview for this file type is not supported.")
 
     audit_log.log("DOCUMENT_VIEWED", f"filename={safe_filename}")
-    return FileResponse(
-        path=file_path,
-        media_type=media_type,
-        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
-    )
+    return FileResponse(path=file_path, media_type=media_type,
+                        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'})
+
+
+@app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])
+def delete_document(filename: str, request: Request):
+    """New: previously there was no way to remove a document at all — the
+    library UI's delete affordance had nothing to call. Removes both the
+    file on disk and its chunks from the vector store."""
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    removed_chunks = delete_by_source_file(safe_filename)
+    file_existed = file_path.is_file()
+    file_path.unlink(missing_ok=True)
+
+    if not file_existed and removed_chunks == 0:
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    audit_log.log("DOCUMENT_DELETED", f"file={safe_filename}: {removed_chunks} chunk(s) removed",
+                  ip=_client_ip(request))
+    return {"filename": safe_filename, "chunks_removed": removed_chunks}
 
 
 def _json_safe_records(df):
     """pandas NaN in a nullable numeric column serializes to invalid JSON
-    (`NaN` is not valid JSON) and crashes the response with a 500. Swap NaN
-    for None before to_dict()."""
+    and crashes the response with a 500. Swap NaN for None before to_dict()."""
     return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 
 @app.get("/sources")
 def list_sources():
-    """Every distinct document currently backing the chatbot's answers —
-    the transparency endpoint: where the data is actually coming from."""
     table = get_table()
     if table is None:
         return []
@@ -250,22 +267,42 @@ def sources_for_drug(drug_name: str):
     return _json_safe_records(df[cols])
 
 
-@app.delete("/session/{session_id}")
-def forget_session(session_id: str):
+@app.get("/drugs")
+def list_drugs():
+    """New: the medication selector was hard-coded (`popularDrugs`) and took
+    free text, so users could pick a drug that was never ingested. This is
+    the real list to build that dropdown from."""
+    return {"drugs": query_understanding.known_drugs()}
+
+
+@app.delete("/session/{session_id}", dependencies=[Depends(require_admin_key)])
+def forget_session(session_id: str, request: Request):
     """Right-to-erasure for a session. Only clears per-session conversational
     state — the audit log is intentionally untouched (it's designed to never
-    hold raw PII in the first place, so there's nothing sensitive to remove)."""
+    hold raw PII in the first place, so there's nothing sensitive to remove).
+    Admin-key gated: this is a destructive action on behalf of a user, not
+    something any anonymous caller should be able to trigger for any session_id."""
     cleared = query_understanding.forget(session_id)
-    audit_log.log("SESSION_ERASURE_REQUESTED", f"session={session_id}")
+    audit_log.log("SESSION_ERASURE_REQUESTED", f"session={session_id}", ip=_client_ip(request))
     return {"status": "ACKNOWLEDGED", "cleared": cleared}
 
 
-@app.get("/review/pending")
+@app.get("/review/pending", dependencies=[Depends(require_admin_key)])
 def pending_reviews():
     return review_queue.pending()
 
 
-@app.post("/review/{request_id}")
+@app.get("/review/{request_id}", dependencies=[Depends(require_admin_key)])
+def get_review(request_id: str):
+    """New: the response schema promised the frontend could poll a pending
+    review by request_id; there was no endpoint to poll."""
+    try:
+        return review_queue.get(request_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="unknown request id")
+
+
+@app.post("/review/{request_id}", dependencies=[Depends(require_admin_key)])
 def resolve_review(request_id: str, action: str, notes: str = "", answer: str | None = None):
     try:
         return review_queue.resolve(request_id, action, notes, answer)
@@ -277,6 +314,29 @@ def resolve_review(request_id: str, action: str, notes: str = "", answer: str | 
 def verify_audit():
     ok, msg = audit_log.verify()
     return {"valid": ok, "message": msg, "entries": len(audit_log)}
+
+
+@app.get("/audit/logs", dependencies=[Depends(require_admin_key)])
+def list_audit_logs(limit: int = 100, offset: int = 0):
+    """New: /audit/verify only ever returned counts. This is the actual
+    listing the AuditLogs admin page needs, instead of static mock rows."""
+    return {"entries": audit_log.entries(limit=limit, offset=offset), "total": len(audit_log)}
+
+
+@app.get("/dashboard/stats", dependencies=[Depends(require_admin_key)])
+def dashboard_stats():
+    """New: the admin dashboard had nothing real to show numbers from."""
+    table = get_table()
+    n_chunks = table.count_rows() if table is not None else 0
+    n_drugs = len(query_understanding.known_drugs())
+    ok, _ = audit_log.verify()
+    return {
+        "documents_indexed": n_drugs,
+        "chunks_indexed": n_chunks,
+        "pending_reviews": len(review_queue.pending()),
+        "audit_entries": len(audit_log),
+        "audit_chain_valid": ok,
+    }
 
 
 if __name__ == "__main__":
