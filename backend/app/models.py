@@ -13,8 +13,7 @@ class DocumentMetadata(BaseModel):
     source_file: str
     source_type: str
     source_identifier: Optional[str] = "unknown"
-
-class Section(BaseModel):
+    original_filename: Optional[str] = None
     title: str
     text: str
     subsections: List['Section'] = Field(default_factory=list)
@@ -46,8 +45,7 @@ class Chunk(BaseModel):
     effective_date: Optional[str] = "unknown"
     ingestion_timestamp: str
     extraction_method: str
-
-class EmbeddingRecord(BaseModel):
+    original_filename: Optional[str] = None
     chunk: Chunk
     embedding: List[float]
 

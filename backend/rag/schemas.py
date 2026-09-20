@@ -26,6 +26,8 @@ class Chunk(BaseModel):
     effective_date: Optional[str] = None    # for detecting superseded label versions
     ingestion_timestamp: Optional[str] = None
     extraction_method: Optional[str] = None
+    original_filename: Optional[str] = None  # clean display name, distinct from
+    # source_file (which carries the job-id-prefix for on-disk collision-safety)
 
 
 class RetrievedChunk(BaseModel):

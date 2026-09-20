@@ -32,10 +32,12 @@ def _to_rag_chunk(chunk) -> RagChunk:
         effective_date=chunk.effective_date,
         ingestion_timestamp=chunk.ingestion_timestamp,
         extraction_method=chunk.extraction_method,
+        original_filename=chunk.original_filename,
     )
 
 
-def parse_and_chunk(path: str, doc_id: str = None, drug_name: str = None) -> list[RagChunk]:
+def parse_and_chunk(path: str, doc_id: str = None, drug_name: str = None,
+                    original_filename: str = None) -> list[RagChunk]:
     """Parse + chunk only — nothing is written to the store OR the version
     registry yet, so a caller can run a safety check (injection scan, size
     limit, etc.) on the result before deciding whether to keep any record of
@@ -43,7 +45,8 @@ def parse_and_chunk(path: str, doc_id: str = None, drug_name: str = None) -> lis
     scan ever ran — meaning a rejected document, including plainly-wrong
     test uploads, still got permanently registered. Moved to store_chunks,
     below, which only runs once a document is actually being kept.)"""
-    doc = ParserFactory.parse_document(file_path=path, doc_id=doc_id, drug_name=drug_name)
+    doc = ParserFactory.parse_document(file_path=path, doc_id=doc_id, drug_name=drug_name,
+                                       original_filename=original_filename)
     chunks = Chunker().chunk_document(doc)
     return [_to_rag_chunk(c) for c in chunks]
 
@@ -72,13 +75,15 @@ def _register_version(chunk: RagChunk) -> None:
 
 
 def store_chunks(chunks: list[RagChunk]) -> int:
-    """Embed and write already-approved chunks, and only now register the
-    document's version metadata — this is the actual "we're keeping this"
-    moment. Returns the count written."""
+    """Embed and write chunks, and only THEN register the document's version
+    metadata -- reordered from "register, then embed+store" so a failure
+    partway through embedding/storage (network error calling the embedding
+    model, a LanceDB write error) can never leave a phantom registry entry
+    for a document that was never actually stored. Returns the count written."""
     if not chunks:
         return 0
-    _register_version(chunks[0])
     add_chunks(chunks)
+    _register_version(chunks[0])
     return len(chunks)
 
 

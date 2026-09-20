@@ -1,6 +1,6 @@
 """Request/response contracts for the API layer. Reuses backend.rag.schemas
 where it already fits instead of redefining Mode/Citation a second time."""
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,16 @@ class QueryRequest(BaseModel):
 
 class DocumentUploadRequest(BaseModel):
     file_path: str
+
+
+class ReviewResolution(BaseModel):
+    """Body for POST /review/{request_id} — was three loose query params
+    (`action` as free text, `notes` and `answer` as query strings), so any
+    string at all became the review's new status and long text had to be
+    URL-encoded into the query string. `action` is now a closed set."""
+    action: Literal["APPROVE", "REJECT", "EDITED"]
+    notes: str = ""
+    answer: Optional[str] = None
 
 
 class ChatbotResponse(RAGResponse):

@@ -1,12 +1,13 @@
 from backend.app.models import DocumentMetadata, ParsedDocument
+from backend.paths import DATA_DIR
 from typing import Optional
 import json
 import os
 
 class VersionManager:
-    def __init__(self, storage_dir: str = "data/vector_db"):
-        self.storage_dir = storage_dir
-        self.metadata_registry = os.path.join(storage_dir, "metadata_registry.json")
+    def __init__(self, storage_dir: str = None):
+        self.storage_dir = storage_dir or str(DATA_DIR / "vector_db")
+        self.metadata_registry = os.path.join(self.storage_dir, "metadata_registry.json")
         os.makedirs(self.storage_dir, exist_ok=True)
 
     def load_registry(self) -> dict:

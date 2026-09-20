@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from backend.rag import config
 from backend.rag.schemas import QueryInfo, RetrievedChunk
+from backend.safety import injection_guard
 
 load_dotenv()
 
@@ -42,19 +43,25 @@ class Generation(BaseModel):
     model: str
 
 
-def build_context(evidence: list[RetrievedChunk]) -> str:
+def build_context_blocks(evidence: list[RetrievedChunk]) -> list[str]:
     blocks = []
     for i, r in enumerate(evidence, start=1):
         c = r.chunk
         page = f", page {c.page}" if c.page else ""
         blocks.append(f"[{i}] ({c.drug_name} | {c.section} | {c.source_file}{page})\n{c.text}")
-    return "\n\n".join(blocks)
+    return blocks
 
 
 def build_messages(info: QueryInfo, evidence: list[RetrievedChunk]) -> list[dict]:
     about = f" (about {', '.join(info.drug_names)})" if info.drug_names else ""
-    user = (f"Drug-label excerpts:\n\n{build_context(evidence)}\n\n"
-            f"Question{about}: {info.original_query}")
+    # delimit_context wraps the retrieved chunks in explicit <context>/
+    # <instructions> tags telling the model the context is reference data,
+    # never a command to obey -- this existed in injection_guard.py but was
+    # never actually called; the prompt was just plain string concatenation.
+    user = injection_guard.delimit_context(
+        build_context_blocks(evidence),
+        f"Question{about}: {info.original_query}",
+    )
     return [
         {"role": "system", "content": GROUNDING_RULES + "\n\n" + PERSONAS[info.mode]},
         {"role": "user", "content": user},

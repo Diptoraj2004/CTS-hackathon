@@ -2,6 +2,8 @@
 and section hints, producing a standalone query for retrieval."""
 import difflib
 import re
+import threading
+import time
 
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
@@ -24,11 +26,44 @@ SECTION_RULES = [
      ["used for", "what is it for", "indicat", "treat"]),
 ]
 
-_sessions: dict[str, InMemoryChatMessageHistory] = {}
+# session_id -> (last_used_timestamp, history). /query runs as a plain `def`
+# route, which FastAPI dispatches to its threadpool -- concurrent requests
+# really do run on different OS threads, so this dict needs a lock, not just
+# careful ordering. TTL eviction keeps it from growing forever with no
+# restart in sight during a multi-day demo/eval window.
+SESSION_TTL_SECONDS = 2 * 60 * 60
+_sessions: dict[str, tuple[float, InMemoryChatMessageHistory]] = {}
+_sessions_lock = threading.Lock()
+
+# known_drugs() used to call table.to_pandas() -- pulling every row AND
+# every embedding vector into memory -- on every single query, since
+# understand() calls it unconditionally. A short TTL cache turns "reload the
+# whole table" into "reload it at most once every few seconds," and
+# invalidate_known_drugs_cache() (called from main.py right after a
+# successful ingestion) means a newly-ingested drug is visible immediately
+# rather than waiting out the TTL.
+_KNOWN_DRUGS_TTL_SECONDS = 30
+_known_drugs_cache: tuple[float, list[str]] | None = None
+_known_drugs_lock = threading.Lock()
+
+
+def _prune_expired_sessions_locked() -> None:
+    """Caller must already hold _sessions_lock."""
+    cutoff = time.time() - SESSION_TTL_SECONDS
+    for sid in [s for s, (last_used, _) in _sessions.items() if last_used < cutoff]:
+        del _sessions[sid]
 
 
 def get_history(session_id: str) -> InMemoryChatMessageHistory:
-    return _sessions.setdefault(session_id, InMemoryChatMessageHistory())
+    now = time.time()
+    with _sessions_lock:
+        _prune_expired_sessions_locked()
+        if session_id in _sessions:
+            _, hist = _sessions[session_id]
+        else:
+            hist = InMemoryChatMessageHistory()
+        _sessions[session_id] = (now, hist)
+        return hist
 
 
 def forget(session_id: str) -> bool:
@@ -36,15 +71,32 @@ def forget(session_id: str) -> bool:
     Returns True if a session existed and was cleared, False if there was
     nothing to clear (already gone / never existed). Called by
     DELETE /session/{session_id} in main.py."""
-    return _sessions.pop(session_id, None) is not None
+    with _sessions_lock:
+        return _sessions.pop(session_id, None) is not None
+
+
+def invalidate_known_drugs_cache() -> None:
+    """Call after a successful ingestion so the new drug shows up in
+    known_drugs() immediately instead of waiting out the TTL."""
+    global _known_drugs_cache
+    with _known_drugs_lock:
+        _known_drugs_cache = None
 
 
 def known_drugs() -> list[str]:
-    """Drug names that actually exist in the vector store."""
+    """Drug names that actually exist in the vector store, cached briefly."""
+    global _known_drugs_cache
+    now = time.time()
+    with _known_drugs_lock:
+        if _known_drugs_cache is not None and now - _known_drugs_cache[0] < _KNOWN_DRUGS_TTL_SECONDS:
+            return _known_drugs_cache[1]
+
     table = get_table()
-    if table is None:
-        return []
-    return sorted(set(table.to_pandas()["drug_name"].tolist()))
+    drugs = sorted(set(table.to_pandas()["drug_name"].tolist())) if table is not None else []
+
+    with _known_drugs_lock:
+        _known_drugs_cache = (now, drugs)
+    return drugs
 
 
 def extract_drugs(query: str, known: list[str]) -> list[str]:

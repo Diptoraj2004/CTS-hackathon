@@ -2,70 +2,106 @@
 (same idea as a git commit chain), so editing anything after the fact breaks
 the chain and verify() catches it. No blockchain needed for that property.
 
-Persisted to data/audit/audit_log.json (atomic write, same pattern as
-ingest_jobs.py) — previously pure in-memory, meaning a restart silently
-reset the chain to empty and it still reported "valid" (an empty chain is
-trivially unbroken), which is exactly the failure mode a tamper-evident log
-is supposed to catch, not produce.
+Concurrency note: the previous version rewrote the *entire* log to one
+shared temp file on every single log() call (`self._save()` -> one
+`audit_log.tmp` -> rename). With more than one thread logging at once (a
+background ingestion thread and a /query request, say), two threads racing
+on that same temp filename means one thread's `tmp.replace(path)` can find
+the temp file already consumed by the other thread's replace -- a real
+FileNotFoundError crash. Fixed two ways: a lock serializes every write, and
+the log is append-only JSONL (one line per entry) instead of a full-file
+rewrite, so the store itself is O(1) per call rather than O(n).
 
 Right-to-erasure note: a hash chain can't support editing or deleting a past
-entry without registering as tampering — that's the whole point of it. So
+entry without registering as tampering -- that's the whole point of it. So
 "delete a user's data but keep the audit trail" only works if raw PII never
 enters the log in the first place. log() redacts `details` itself, on top of
-whatever the caller already redacted, so this can't be forgotten at a call site.
+whatever the caller already redacted, so this can't be forgotten at a call
+site. As of this version, a broken/unavailable redactor means log() raises
+rather than silently writing unredacted text -- see redaction.py.
 """
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 
-from backend.safety.redaction import redact
+from backend.paths import DATA_DIR
+from backend.safety.redaction import RedactionUnavailable, redact
 
-LOG_PATH = Path("data/audit/audit_log.json")
+LOG_PATH = DATA_DIR / "audit" / "audit_log.jsonl"
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+_REDACTION_DOWN_PLACEHOLDER = "[REDACTION UNAVAILABLE — details withheld to avoid logging unredacted text]"
 
 
 class AuditLog:
     def __init__(self):
+        self._lock = threading.RLock()
         self._chain: list[dict] = self._load()
         if not self._chain:
             self._append("SYSTEM_INIT", "audit log started", "0")
 
     def _load(self) -> list[dict]:
-        if LOG_PATH.exists():
-            try:
-                return json.loads(LOG_PATH.read_text(encoding="utf-8"))
-            except Exception as e:
-                print(f"[audit_log] couldn't read existing log ({type(e).__name__}: {e}); starting a fresh one")
-        return []
-
-    def _save(self) -> None:
-        tmp = LOG_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._chain), encoding="utf-8")
-        tmp.replace(LOG_PATH)
+        if not LOG_PATH.exists():
+            return []
+        chain = []
+        with LOG_PATH.open("r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    chain.append(json.loads(line))
+                except json.JSONDecodeError:
+                    # A torn last line (crash mid-write) is recoverable by
+                    # just dropping it -- everything before it is intact.
+                    print(f"[audit_log] skipping unparseable line {i} in {LOG_PATH}")
+        return chain
 
     def _hash(self, entry: dict) -> str:
         return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
 
-    def _append(self, event_type: str, details: str, previous_hash: str, ip: str | None = None) -> dict:
+    def _append(self, event_type: str, details: str, previous_hash: str,
+                ip: str | None = None, user: str | None = None,
+                resource: str | None = None, status: str | None = None) -> dict:
         entry = {
             "timestamp": time.time(),
             "event_type": event_type,
             "details": details,
             "ip": ip,
+            "user": user,
+            "resource": resource,
+            "status": status,
             "previous_hash": previous_hash,
         }
         entry["hash"] = self._hash(entry)
-        self._chain.append(entry)
-        self._save()
+        with self._lock:
+            self._chain.append(entry)
+            with LOG_PATH.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
         return entry
 
-    def log(self, event_type: str, details: str, ip: str | None = None) -> dict:
-        return self._append(event_type, redact(details), self._chain[-1]["hash"], ip=ip)
+    def log(self, event_type: str, details: str, ip: str | None = None,
+            user: str | None = None, resource: str | None = None,
+            status: str | None = None) -> dict:
+        try:
+            safe_details = redact(details)
+        except RedactionUnavailable:
+            # Never let a broken redactor take down the audit trail itself --
+            # that would include losing the ability to log THIS fact. Withhold
+            # instead of either raising or passing raw text through.
+            safe_details = _REDACTION_DOWN_PLACEHOLDER
+        with self._lock:
+            prev_hash = self._chain[-1]["hash"]
+        return self._append(event_type, safe_details, prev_hash,
+                            ip=ip, user=user, resource=resource, status=status)
 
     def verify(self) -> tuple[bool, str]:
-        for i in range(1, len(self._chain)):
-            prev, cur = self._chain[i - 1], self._chain[i]
+        with self._lock:
+            chain = list(self._chain)
+        for i in range(1, len(chain)):
+            prev, cur = chain[i - 1], chain[i]
             if cur["previous_hash"] != prev["hash"]:
                 return False, f"broken link at entry {i}"
             recomputed = self._hash({k: v for k, v in cur.items() if k != "hash"})
@@ -77,10 +113,13 @@ class AuditLog:
         """Most-recent-first page of the chain, for the audit-log listing
         endpoint the admin UI actually needs (verify() alone only gives
         counts, never the entries themselves)."""
-        return list(reversed(self._chain))[offset:offset + limit]
+        with self._lock:
+            chain = list(self._chain)
+        return list(reversed(chain))[offset:offset + limit]
 
     def __len__(self) -> int:
-        return len(self._chain)
+        with self._lock:
+            return len(self._chain)
 
 
 if __name__ == "__main__":
