@@ -4844,6 +4844,128 @@ a {
   color: #003d41;
 }
 
+.dl-action-btn--delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+/* ── Delete Confirmation Modal ── */
+.dl-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+  padding: 16px;
+  animation: dl-fade-in 0.15s ease-out;
+}
+
+.dl-modal-card {
+  background: #ffffff;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 440px;
+  padding: 24px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  border: 1px solid #e5e7eb;
+  animation: dl-scale-up 0.15s ease-out;
+}
+
+.dl-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.dl-modal-icon-wrap {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #fee2e2;
+  color: #dc2626;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.dl-modal-title-area {
+  flex: 1;
+}
+
+.dl-modal-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 6px 0;
+  line-height: 1.3;
+}
+
+.dl-modal-description {
+  font-size: 13.5px;
+  color: #4b5563;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.dl-modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.dl-modal-btn {
+  padding: 9px 18px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  border: none;
+}
+
+.dl-modal-btn--cancel {
+  background: #ffffff;
+  color: #374151;
+  border: 1.5px solid #e5e7eb;
+}
+
+.dl-modal-btn--cancel:hover {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #111827;
+}
+
+.dl-modal-btn--delete {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.dl-modal-btn--delete:hover {
+  background: #b91c1c;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.25);
+}
+
+@keyframes dl-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dl-scale-up {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
 /* ── Empty state ── */
 .dl-empty {
   display: flex;

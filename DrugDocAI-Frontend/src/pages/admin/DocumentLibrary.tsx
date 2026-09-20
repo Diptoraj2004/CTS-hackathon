@@ -9,7 +9,7 @@ import {
   AlertTriangle,
   Eye,
   Download,
-  MoreHorizontal,
+  Trash2,
   ChevronLeft,
   ChevronRight,
   X,
@@ -60,6 +60,8 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
     version,
     uploadedOn,
     status: "Processed",
+    fileUrl: item.file_url || item.url || item.blob_url,
+    fileBlob: item.blob || item.file_blob,
   };
 };
 
@@ -176,6 +178,9 @@ export const DocumentLibrary: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Modal state for delete confirmation
+  const [docToDelete, setDocToDelete] = useState<DocumentRecord | null>(null);
+
   // Filter state
   const [search, setSearch] = useState("");
   const [filterSource, setSource] = useState("");
@@ -275,8 +280,53 @@ export const DocumentLibrary: React.FC = () => {
       alert(`Inline preview is only supported for PDF documents. "${doc.fileName}" is a ${doc.fileType} file.`);
       return;
     }
-    const viewUrl = `${API_BASE}/documents/${encodeURIComponent(doc.fileName)}/view`;
+    const viewUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.fileName)}/view`;
     window.open(viewUrl, "_blank", "noopener,noreferrer");
+  };
+
+  // Handle Download Document action
+  const handleDownloadDocument = (doc: DocumentRecord) => {
+    const documentId = doc.id;
+    
+    if (doc.fileBlob instanceof Blob) {
+      const blobUrl = URL.createObjectURL(doc.fileBlob);
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = doc.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+      return;
+    }
+
+    const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(documentId)}/download`;
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = doc.fileName;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Handle Delete Confirmation
+  const handleDeleteClick = (doc: DocumentRecord) => {
+    setDocToDelete(doc);
+  };
+
+  const cancelDelete = () => {
+    setDocToDelete(null);
+  };
+
+  const confirmDelete = () => {
+    if (!docToDelete) return;
+    const documentId = docToDelete.id;
+
+    // Remove document from state immediately
+    setDocuments(prev => prev.filter(d => d.id !== documentId));
+    setDocToDelete(null);
   };
 
   const pageRows = useMemo(
@@ -459,11 +509,21 @@ export const DocumentLibrary: React.FC = () => {
                           >
                             <Eye size={15} />
                           </button>
-                          <button className="dl-action-btn" title="Download document" aria-label="Download">
+                          <button
+                            className="dl-action-btn"
+                            title="Download document"
+                            aria-label={`Download ${doc.fileName}`}
+                            onClick={() => handleDownloadDocument(doc)}
+                          >
                             <Download size={15} />
                           </button>
-                          <button className="dl-action-btn" title="More options" aria-label="More options">
-                            <MoreHorizontal size={15} />
+                          <button
+                            className="dl-action-btn dl-action-btn--delete"
+                            title="Delete document"
+                            aria-label={`Delete ${doc.fileName}`}
+                            onClick={() => handleDeleteClick(doc)}
+                          >
+                            <Trash2 size={15} />
                           </button>
                         </div>
                       </td>
@@ -482,6 +542,42 @@ export const DocumentLibrary: React.FC = () => {
           </>
         )}
       </div>
+
+      {/* ── Delete Confirmation Modal ── */}
+      {docToDelete && (
+        <div className="dl-modal-overlay" onClick={cancelDelete}>
+          <div className="dl-modal-card" onClick={e => e.stopPropagation()}>
+            <div className="dl-modal-header">
+              <div className="dl-modal-icon-wrap">
+                <Trash2 size={22} />
+              </div>
+              <div className="dl-modal-title-area">
+                <h3 className="dl-modal-title">Delete this document permanently?</h3>
+                <p className="dl-modal-description">
+                  This action cannot be undone. The document and its associated data will be permanently deleted.
+                </p>
+              </div>
+            </div>
+            <div className="dl-modal-actions">
+              <button
+                type="button"
+                className="dl-modal-btn dl-modal-btn--cancel"
+                onClick={cancelDelete}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="dl-modal-btn dl-modal-btn--delete"
+                onClick={confirmDelete}
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminLayout>
   );
 };
+
