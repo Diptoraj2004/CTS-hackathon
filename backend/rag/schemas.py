@@ -58,6 +58,9 @@ class RAGResponse(BaseModel):
     status: Literal["APPROVED", "ESCALATED"]
     confidence: float = 0.0
     reason: Optional[str] = None    # why it was escalated, if it was
+    risk_level: Optional[Literal["low", "high"]] = None  # "high" = mode-consistency/
+    # safety escalation (PRD's Edge Case #1); "low" = evidence-quality escalation
+    # (weak match, missing citations, etc.) — read this, not reason's wording.
 
 
 if __name__ == "__main__":

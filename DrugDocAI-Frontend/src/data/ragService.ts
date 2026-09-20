@@ -35,11 +35,31 @@ export interface RagResponse {
 const DISCLAIMER =
   "This information is from official medical sources and is not a substitute for professional medical advice.";
 
+// crypto.randomUUID() only exists in "secure contexts" (HTTPS or localhost).
+// A demo served over plain HTTP on a LAN (a common "point a laptop at it"
+// setup) throws here on every single call, breaking every query. This
+// fallback is not cryptographically strong, which is fine — it's a
+// throwaway per-tab session key, not a security token.
+function makeUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    try {
+      return crypto.randomUUID();
+    } catch {
+      // fall through to the manual version below (insecure-context throw)
+    }
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function sessionId(): string {
   const key = "drugdoc_session_id";
   let id = sessionStorage.getItem(key);
   if (!id) {
-    id = crypto.randomUUID();
+    id = makeUuid();
     sessionStorage.setItem(key, id);
   }
   return id;
@@ -59,6 +79,59 @@ function mapSources(citations: any[]): RagSource[] {
   }));
 }
 
+// The backend returns "- bullet" lines and inline "[n]" citation markers as
+// plain text with real newlines. Split into a lead paragraph plus a bullet
+// list so the UI can render an actual <ul> instead of one flattened <p>
+// where every bullet and newline has collapsed into a single line.
+function splitAnswer(text: string): { lead: string; bullets: RagBulletItem[] } {
+  if (!text) return { lead: "", bullets: [] };
+  const lines = text.split(/\r?\n/);
+  const leadLines: string[] = [];
+  const bulletLines: string[] = [];
+  let inBullets = false;
+
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (/^[-*]\s+/.test(trimmed)) {
+      inBullets = true;
+      bulletLines.push(trimmed.replace(/^[-*]\s+/, ""));
+    } else if (trimmed === "") {
+      continue; // blank lines are just paragraph/list separators
+    } else if (!inBullets) {
+      leadLines.push(trimmed);
+    } else {
+      // a continuation line wrapped under the previous bullet
+      if (bulletLines.length > 0) {
+        bulletLines[bulletLines.length - 1] += " " + trimmed;
+      } else {
+        leadLines.push(trimmed);
+      }
+    }
+  }
+
+  return {
+    lead: leadLines.join(" ").trim(),
+    bullets: bulletLines.map((t) => ({ text: t })),
+  };
+}
+
+function networkErrorResponse(question: string, medication: string, mode: "patient" | "professional"): RagResponse {
+  return {
+    question,
+    medication,
+    mode,
+    risk_level: "normal",
+    answerLead: "DrugDoc AI couldn't reach the server.",
+    bulletPoints: [],
+    answerFollowUp: "Check your connection (or the backend URL, if you're running this against a tunnel) and try again.",
+    disclaimer: DISCLAIMER,
+    confidence: "Low",
+    confidenceDetail: "No response was received from the server.",
+    sources: [],
+    requestId: null,
+  };
+}
+
 export async function getRagResponse(
   question: string,
   medication: string,
@@ -66,25 +139,56 @@ export async function getRagResponse(
 ): Promise<RagResponse> {
   const backendMode = mode === "professional" ? "clinician" : "patient";
 
-  const res = await fetch(`${API_BASE}/query`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId(), query: question, mode: backendMode }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/query`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId(),
+        query: question,
+        mode: backendMode,
+        // Previously never sent — the selected drug (from the medication
+        // dropdown) was silently discarded, so retrieval relied entirely on
+        // the drug name being spelled out inside the question text itself.
+        drug_name: medication || undefined,
+      }),
+    });
+  } catch {
+    // fetch() itself throws on a network failure (DNS, refused connection,
+    // dead tunnel) — this was completely unhandled before, an unguarded
+    // throw straight out of this function into the caller.
+    return networkErrorResponse(question, medication, mode);
+  }
 
   if (!res.ok) {
-    // blocked query (injection / malformed) or server error
+    // Previously every non-OK response (429 rate-limited, 422 corpus safety
+    // failure, 500/503 server error) rendered the exact same generic
+    // "please rephrase" message, which is actively misleading for a rate
+    // limit or a server outage — neither is fixed by rephrasing.
+    let lead = "This question couldn't be processed.";
+    let followUp = "Please rephrase your question and try again.";
+    if (res.status === 429) {
+      lead = "Too many questions at once.";
+      followUp = "Please wait a moment before asking another question.";
+    } else if (res.status === 422) {
+      lead = "A source document failed a safety check.";
+      followUp = "This has been logged. Try a different question, or contact an administrator.";
+    } else if (res.status >= 500) {
+      lead = "DrugDoc AI hit an error answering this.";
+      followUp = "The answer service is temporarily unavailable. Please try again shortly.";
+    }
     return {
       question,
       medication,
       mode,
       risk_level: "normal",
-      answerLead: "This question couldn't be processed.",
+      answerLead: lead,
       bulletPoints: [],
-      answerFollowUp: "Please rephrase your question and try again.",
+      answerFollowUp: followUp,
       disclaimer: DISCLAIMER,
       confidence: "Low",
-      confidenceDetail: "Request was rejected before an answer could be generated.",
+      confidenceDetail: `Request was rejected before an answer could be generated (status ${res.status}).`,
       sources: [],
       requestId: null,
     };
@@ -93,11 +197,11 @@ export async function getRagResponse(
   const data = await res.json();
 
   if (data.status === "ESCALATED") {
-    // Mode-mismatch / category-gate reasons read as "high risk" in the UI;
-    // a plain insufficient-evidence escalation reads as "low confidence".
+    // risk_level now comes straight from the backend (see backend/main.py's
+    // _escalate) instead of regex-matching the human-readable reason text,
+    // which never actually contained the words the old regex looked for.
+    const isHighRisk = data.risk_level === "high";
     const reason: string = data.reason || "";
-    const isHighRisk =
-      /clinician-level|high-risk|mode mismatch/i.test(reason);
 
     return {
       question,
@@ -120,13 +224,14 @@ export async function getRagResponse(
   }
 
   // APPROVED
+  const { lead, bullets } = splitAnswer(data.answer || "");
   return {
     question,
     medication,
     mode,
     risk_level: "low",
-    answerLead: data.answer || "",
-    bulletPoints: [],
+    answerLead: lead || data.answer || "",
+    bulletPoints: bullets,
     answerFollowUp: "",
     disclaimer: DISCLAIMER,
     confidence: confidenceBucket(data.confidence ?? 0),

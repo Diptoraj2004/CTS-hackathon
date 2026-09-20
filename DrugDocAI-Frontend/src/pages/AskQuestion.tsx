@@ -734,14 +734,8 @@ export const AskQuestion: React.FC = () => {
                       ) : (
                         ragData && (
                           <div className="f04-answer-content">
-                            <p className="f04-answer-lead">
-                              {ragData.answerLead.split("well tolerated").length > 1 ? (
-                                <>
-                                  {ragData.medication} is generally <strong>well tolerated</strong>, but like all medications, it can cause side effects. The most common side effects include:
-                                </>
-                              ) : (
-                                ragData.answerLead
-                              )}
+                            <p className="f04-answer-lead" style={{ whiteSpace: "pre-wrap" }}>
+                              {ragData.answerLead}
                             </p>
 
                             {ragData.bulletPoints && ragData.bulletPoints.length > 0 && (

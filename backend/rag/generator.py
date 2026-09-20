@@ -68,10 +68,21 @@ def _call_groq(messages: list[dict]) -> str:
     return resp.choices[0].message.content
 
 
+class GenerationError(Exception):
+    """Raised when no generation backend could produce an answer — caught in
+    main.py and turned into a clean escalation instead of an unhandled 500."""
+
+
 def _call_ollama(messages: list[dict]) -> str:
-    resp = ollama.chat(model=config.OLLAMA_MODEL, messages=messages,
-                       options={"temperature": config.TEMPERATURE})
-    return resp.message.content
+    try:
+        resp = ollama.chat(model=config.OLLAMA_MODEL, messages=messages,
+                           options={"temperature": config.TEMPERATURE})
+        return resp.message.content
+    except Exception as e:
+        # Previously unguarded: an Ollama that isn't running (connection
+        # refused) or hasn't pulled config.OLLAMA_MODEL surfaced as a raw
+        # exception all the way up through main.py as an opaque 500.
+        raise GenerationError(f"Ollama call failed ({type(e).__name__}): {e}") from e
 
 
 def generate(info: QueryInfo, evidence: list[RetrievedChunk]) -> Generation:

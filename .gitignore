@@ -1,6 +1,16 @@
 # LanceDB local data
 backend/rag/lancedb_data/
 
+# Runtime state — uploaded documents, the vector DB, the version registry.
+# This was getting committed (including a metadata_registry.json with test
+# junk like "Cocina" and "pokemon" PDF uploads in it) — it's generated at
+# runtime, not source, and differs machine to machine.
+data/uploads/
+data/vector_db/
+
+# Built frontend output
+DrugDocAI-Frontend/dist/
+
 # Virtual environment
 .venv/
 venv/

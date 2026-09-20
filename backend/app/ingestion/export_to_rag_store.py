@@ -36,19 +36,48 @@ def _to_rag_chunk(chunk) -> RagChunk:
 
 
 def parse_and_chunk(path: str, doc_id: str = None, drug_name: str = None) -> list[RagChunk]:
-    """Parse + version-tag + chunk only — nothing is written to the store yet,
-    so a caller can run a safety check (injection scan, size limit, etc.) on
-    the result before deciding whether to store it."""
+    """Parse + chunk only — nothing is written to the store OR the version
+    registry yet, so a caller can run a safety check (injection scan, size
+    limit, etc.) on the result before deciding whether to keep any record of
+    it at all. (Version tagging used to happen here, before the injection
+    scan ever ran — meaning a rejected document, including plainly-wrong
+    test uploads, still got permanently registered. Moved to store_chunks,
+    below, which only runs once a document is actually being kept.)"""
     doc = ParserFactory.parse_document(file_path=path, doc_id=doc_id, drug_name=drug_name)
-    doc = VersionManager().tag_document(doc)
     chunks = Chunker().chunk_document(doc)
     return [_to_rag_chunk(c) for c in chunks]
 
 
+def _register_version(chunk: RagChunk) -> None:
+    """Registers this document in the version registry. Reads fields straight
+    off an already-built chunk instead of needing the original ParsedDocument
+    object, since every chunk from one document carries the same
+    document-level metadata. Same registry shape VersionManager.tag_document
+    used to write, just called at the right time now."""
+    vm = VersionManager()
+    registry = vm.load_registry()
+    registry.setdefault(chunk.drug_name, {})[chunk.version or "unknown"] = {
+        "document_id": chunk.document_id,
+        "set_id": chunk.set_id,
+        "drug_name": chunk.drug_name,
+        "active_ingredient": chunk.active_ingredient,
+        "label_version": chunk.version,
+        "effective_date": chunk.effective_date,
+        "ingestion_timestamp": chunk.ingestion_timestamp,
+        "source_file": chunk.source_file,
+        "source_type": chunk.source_type,
+        "source_identifier": chunk.source_identifier,
+    }
+    vm.save_registry(registry)
+
+
 def store_chunks(chunks: list[RagChunk]) -> int:
-    """Embed and write already-approved chunks. Returns the count written."""
+    """Embed and write already-approved chunks, and only now register the
+    document's version metadata — this is the actual "we're keeping this"
+    moment. Returns the count written."""
     if not chunks:
         return 0
+    _register_version(chunks[0])
     add_chunks(chunks)
     return len(chunks)
 
