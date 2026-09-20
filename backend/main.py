@@ -18,7 +18,7 @@ from backend.rag.pipeline import answer as rag_answer
 from backend.rag.vector_store import delete_by_source_file, get_embedder, get_table
 from backend.safety import injection_guard, redaction
 from backend.safety.audit_log import AuditLog
-from backend.safety.auth import require_admin_key
+from backend.safety.auth import require_admin_key, set_audit_logger
 from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
@@ -32,15 +32,12 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    # 422 now only ever means "your request body was malformed" — it used to
-    # get reused for a corpus prompt-injection hit ("A source document failed
-    # a safety check"), which is a completely different situation and now
-    # goes through pipeline.py's ESCALATED path instead, never an HTTP error.
     errors = [f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()]
     return JSONResponse(status_code=422, content={"detail": "Invalid request: " + "; ".join(errors)})
 
 
 audit_log = AuditLog()
+set_audit_logger(audit_log)
 review_queue = HumanReviewQueue(audit_log)
 
 UPLOAD_DIR = DATA_DIR / "uploads"
@@ -142,8 +139,15 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
         stored_path.unlink(missing_ok=True)
 
 
+@app.get("/admin/auth/check", dependencies=[Depends(require_admin_key)])
+def admin_auth_check(request: Request):
+    audit_log.log("ADMIN_AUTH_SUCCESS", "Admin authentication succeeded",
+                  ip=_client_ip(request), status="SUCCESS")
+    return {"authenticated": True}
+
+
 @app.post("/ingest", dependencies=[Depends(require_admin_key)])
-async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None = None):
+async def ingest_document(file: UploadFile, drug_name: str, request: Request, doc_id: str | None = None):
     content = await file.read()
     if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024*1024)} MB limit.")
@@ -155,8 +159,17 @@ async def ingest_document(file: UploadFile, drug_name: str, doc_id: str | None =
     stored_path = UPLOAD_DIR / f"{job['job_id'][:8]}_{safe_filename}"
     stored_path.write_bytes(content)
 
+    audit_log.log(
+        "DOCUMENT_UPLOAD_REQUESTED",
+        f"file={safe_filename}: upload request queued (drug={clean_drug_name})",
+        ip=_client_ip(request),
+        resource=f"document:{safe_filename}",
+        status="QUEUED",
+    )
+
     _ingest_executor.submit(_run_ingestion, job["job_id"], stored_path, clean_drug_name, doc_id, safe_filename)
     return {"job_id": job["job_id"], "status": "QUEUED"}
+
 
 
 @app.get("/ingest/{job_id}/status")
@@ -270,9 +283,16 @@ def resolve_review(request_id: str, body: ReviewResolution):
 
 
 @app.get("/audit/verify")
-def verify_audit():
+def verify_audit(request: Request):
     ok, msg = audit_log.verify()
+    audit_log.log(
+        "AUDIT_VERIFIED",
+        f"integrity_check={'passed' if ok else 'failed'}: {msg}",
+        ip=_client_ip(request),
+        status="SUCCESS" if ok else "FAILED",
+    )
     return {"valid": ok, "message": msg, "entries": len(audit_log)}
+
 
 
 @app.get("/redaction/status", dependencies=[Depends(require_admin_key)])
