@@ -68,5 +68,19 @@
             "source_type": "xml",
             "source_identifier": "0b854ef5_ebe5ec1e-9891-ae48-e053-2a95a90afff6.xml"
         }
+    },
+    "cocint": {
+        "1": {
+            "document_id": "bf001b70-6165-1ec9-e053-2a95a90a1274",
+            "set_id": "bf001b70-6164-1ec9-e053-2a95a90a1274",
+            "drug_name": "cocint",
+            "active_ingredient": "unknown",
+            "label_version": "1",
+            "effective_date": "20210402",
+            "ingestion_timestamp": "2026-09-20T17:34:23.650884",
+            "source_file": "fb85bc2e_bf001b70-6165-1ec9-e053-2a95a90a1274.xml",
+            "source_type": "xml",
+            "source_identifier": "fb85bc2e_bf001b70-6165-1ec9-e053-2a95a90a1274.xml"
+        }
     }
 }

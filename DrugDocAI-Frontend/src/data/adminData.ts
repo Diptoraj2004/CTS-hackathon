@@ -223,27 +223,3 @@ export const AUDIT_LOGS: AuditLogRecord[] = [
   { id: "al-25", timestamp: "Sep 09, 2026 01:45:30 PM", user: "Admin",  action: "Processing Failed",   resource: "salbutamol_scan_bad.png",            details: "Unreadable text in sample image",    status: "Error",   ipAddress: "192.168.1.24" },
 ];
 
-export const AUDIT_USERS   = ["Admin", "system", "user_23", "user_42"];
-export const AUDIT_ACTIONS: ActionType[] = [
-  "Login",
-  "File Uploaded",
-  "Document Processed",
-  "Document Indexed",
-  "Processing Failed",
-  "Document Deleted",
-  "Integrity Check",
-  "User Role Updated",
-  "Verification Failed",
-];
-export const AUDIT_RESOURCES = [
-  "amoxicillin_label.pdf",
-  "metformin_pi.pdf",
-  "atorvastatin_guidelines.pdf",
-  "amlodipine_pi.pdf",
-  "old_version.pdf",
-  "paracetamol_pi.pdf",
-  "user_23",
-  "drug_interactions_reference.xlsx",
-];
-export const AUDIT_STATUSES: AuditStatus[] = ["Success", "Warning", "Error"];
-
