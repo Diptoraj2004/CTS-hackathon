@@ -64,10 +64,17 @@ class XMLParser:
         sections = []
         for component in root.findall('.//v3:component/v3:section', namespaces=self.ns):
             title_elem = component.find('v3:title', namespaces=self.ns)
+            code_elem = component.find('v3:code', namespaces=self.ns)
             text_elems = component.findall('.//v3:text', namespaces=self.ns)
             
-            if title_elem is not None and text_elems:
-                title = title_elem.text.strip() if title_elem.text else "Unknown Section"
+            if text_elems:
+                title = None
+                if title_elem is not None and title_elem.text and title_elem.text.strip():
+                    title = title_elem.text.strip()
+                elif code_elem is not None and code_elem.get('displayName'):
+                    title = code_elem.get('displayName').strip()
+                else:
+                    title = "Unknown Section"
                 
                 texts = []
                 for t in text_elems:

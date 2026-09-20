@@ -125,6 +125,16 @@ def process_query(req: QueryRequest, request: Request):
     )
 
 
+@app.get("/admin/auth/check", dependencies=[Depends(require_admin_key)])
+def admin_auth_check():
+    """Lightweight probe: validates the X-Admin-Key header using the existing
+    require_admin_key dependency and returns 200 {"authenticated": true} if
+    the key is correct.  The frontend admin login uses this to verify a key
+    entered by the operator before storing it in sessionStorage — no new auth
+    mechanism is involved, just a read-only probe of the existing one."""
+    return {"authenticated": True}
+
+
 def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str | None) -> None:
     """Runs on a background thread, off the request/response cycle entirely.
     Parses directly from stored_path — the file's permanent, original-name-
@@ -135,6 +145,13 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
         update_job(job_id, stage="PARSING", detail="Parsing and chunking the document.")
         chunks = parse_and_chunk(str(stored_path), doc_id=doc_id, drug_name=drug_name)
         update_job(job_id, chunks_found=len(chunks))
+
+        if not chunks:
+            detail = "No readable text or sections found in document."
+            audit_log.log("INGESTION_FAILED", f"file={orig_label}: {detail}")
+            update_job(job_id, stage="FAILED", detail=detail, error=detail)
+            stored_path.unlink(missing_ok=True)
+            return
 
         update_job(job_id, stage="SCANNING", detail="Scanning chunks for hidden instructions.")
         flagged = [c for c in chunks if injection_guard.looks_like_injection(c.text)]
@@ -216,6 +233,37 @@ def view_document(filename: str):
                         headers={"Content-Disposition": f'inline; filename="{safe_filename}"'})
 
 
+@app.get("/documents/{filename}/download")
+def download_document(filename: str):
+    """Public download endpoint: serves the stored document file as an attachment download."""
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
+
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        audit_log.log("UNAUTHORIZED_FILE_ACCESS", f"attempted_file={safe_filename}")
+        raise HTTPException(status_code=403, detail="Access denied.")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
+    if ext == "pdf":
+        media_type = "application/pdf"
+    elif ext == "xml":
+        media_type = "application/xml"
+    elif ext in ("xlsx", "xls"):
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    elif ext in ("docx", "doc"):
+        media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        media_type = "application/octet-stream"
+
+    audit_log.log("DOCUMENT_DOWNLOADED", f"filename={safe_filename}")
+    return FileResponse(path=file_path, media_type=media_type,
+                        filename=safe_filename,
+                        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'})
+
+
+
 @app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])
 def delete_document(filename: str, request: Request):
     """New: previously there was no way to remove a document at all — the
@@ -250,7 +298,7 @@ def list_sources():
     if table is None:
         return []
     df = table.to_pandas()
-    cols = [c for c in ["drug_name", "source_file", "version", "effective_date", "source_type"]
+    cols = [c for c in ["drug_name", "source_file", "version", "label_version", "effective_date", "ingestion_timestamp", "source_type"]
             if c in df.columns]
     return _json_safe_records(df[cols].drop_duplicates())
 

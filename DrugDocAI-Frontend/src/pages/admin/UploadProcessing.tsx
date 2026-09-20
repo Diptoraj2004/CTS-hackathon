@@ -21,6 +21,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { AdminLayout } from "../../layouts/AdminLayout";
+import { adminFetch } from "../../auth/adminApi";
 const API_BASE =
   import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -361,7 +362,7 @@ export const UploadProcessing: React.FC = () => {
         formData.append("file", activeFile);
 
         const url = `${API_BASE}/ingest?drug_name=${encodeURIComponent(cleanDrugName)}`;
-        const submitRes = await fetch(url, { method: "POST", body: formData });
+        const submitRes = await adminFetch(url, { method: "POST", body: formData });
 
         if (!submitRes.ok) {
           let errorMsg = `Server returned status ${submitRes.status}`;

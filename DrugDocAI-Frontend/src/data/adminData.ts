@@ -3,7 +3,7 @@
 
 // ── Document Library ──────────────────────────────────────────────────────────
 export type DocStatus = "Processed" | "Processing" | "Error";
-export type FileType = "PDF" | "XLSX" | "DOCX";
+export type FileType = "PDF" | "XLSX" | "DOCX" | "XML";
 
 export interface DocumentRecord {
   id: string;
@@ -50,7 +50,7 @@ export const DOCUMENTS: DocumentRecord[] = [
 // Derived unique filter values from DOCUMENTS
 export const DOC_SOURCES  = [...new Set(DOCUMENTS.map(d => d.source))].sort();
 export const DOC_DRUGS    = [...new Set(DOCUMENTS.map(d => d.drug))].sort();
-export const DOC_FILETYPES: FileType[] = ["PDF", "XLSX", "DOCX"];
+export const DOC_FILETYPES: FileType[] = ["PDF", "XLSX", "DOCX", "XML"];
 export const DOC_STATUSES: DocStatus[] = ["Processed", "Processing", "Error"];
 
 

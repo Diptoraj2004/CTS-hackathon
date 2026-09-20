@@ -14,6 +14,9 @@ import {
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import { mockAuth } from "../auth/mockAuth";
+import { validateAdminKey, setAdminKey } from "../auth/adminApi";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -61,28 +64,42 @@ export const Login: React.FC = () => {
     if (!identifier.trim()) {
       setError(
         role === "admin"
-          ? "Please enter your admin ID or email."
+          ? "Please enter your admin ID."
           : "Please enter your email or phone number."
       );
       return;
     }
 
     if (!password.trim()) {
-      setError("Please enter your password.");
+      setError(
+        role === "admin" ? "Please enter your Admin API Key." : "Please enter your password."
+      );
       return;
     }
 
     setIsLoading(true);
     try {
-      const res = await mockAuth.login(identifier, password, role);
-      if (res.success) {
-        if (role === "admin") {
-          navigate("/admin");
-        } else {
-          navigate("/select");
+      if (role === "admin") {
+        // Admin path: validate the entered key against the backend probe.
+        // The key is stored in sessionStorage ONLY after the backend confirms it.
+        const result = await validateAdminKey(API_BASE, password);
+        if (!result.ok) {
+          setError(result.userMessage);
+          return;
         }
+        // Backend confirmed the key — store for this tab session only.
+        setAdminKey(password);
+        // Record a local mock user so the rest of the app knows the role.
+        await mockAuth.login(identifier, password, "admin");
+        navigate("/admin");
       } else {
-        setError(res.error || "Authentication failed. Please check your credentials.");
+        // User path: existing mock auth, unchanged.
+        const res = await mockAuth.login(identifier, password, "user");
+        if (res.success) {
+          navigate("/select");
+        } else {
+          setError(res.error || "Authentication failed. Please check your credentials.");
+        }
       }
     } catch {
       setError("An error occurred during authentication.");
@@ -448,17 +465,22 @@ export const Login: React.FC = () => {
                   </div>
                 </div>
 
-                {/* PASSWORD FIELD */}
+                {/* PASSWORD / API KEY FIELD */}
                 <div className="form-group">
-                  <label className="form-label">Password</label>
+                  <label className="form-label">
+                    {role === "admin" ? "Admin API Key" : "Password"}
+                  </label>
                   <div className="input-with-icon">
                     <Lock size={17} className="input-icon" />
                     <input
                       type={showPassword ? "text" : "password"}
                       className="form-input password-input"
-                      placeholder="Enter your password"
+                      placeholder={
+                        role === "admin" ? "Enter your Admin API Key" : "Enter your password"
+                      }
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      autoComplete={role === "admin" ? "off" : "current-password"}
                     />
                     <button
                       type="button"
@@ -469,16 +491,18 @@ export const Login: React.FC = () => {
                       onMouseLeave={role === "admin" ? () => setShowPassword(false) : undefined}
                       onTouchStart={role === "admin" ? () => setShowPassword(true) : undefined}
                       onTouchEnd={role === "admin" ? () => setShowPassword(false) : undefined}
-                      aria-label={role === "admin" ? "Hold to show password" : (showPassword ? "Hide password" : "Show password")}
+                      aria-label={role === "admin" ? "Hold to reveal key" : (showPassword ? "Hide password" : "Show password")}
                     >
                       {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
                   </div>
-                  <div className="forgot-password-wrap">
-                    <a href="#forgot" className="forgot-password-link">
-                      Forgot password?
-                    </a>
-                  </div>
+                  {role === "user" && (
+                    <div className="forgot-password-wrap">
+                      <a href="#forgot" className="forgot-password-link">
+                        Forgot password?
+                      </a>
+                    </div>
+                  )}
                 </div>
 
                 {/* SUBMIT BUTTON */}

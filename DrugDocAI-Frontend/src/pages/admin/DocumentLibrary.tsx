@@ -26,33 +26,78 @@ import {
 } from "../../data/adminData";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+import { adminFetch } from "../../auth/adminApi";
 const PAGE_SIZE = 10;
+
+// Helper to strip 8-char hex/uuid storage prefix (e.g., 94d34749_Python.pdf -> Python.pdf)
+const getDisplayFileName = (item: any, index: number): string => {
+  if (item.filename) return item.filename;
+  if (item.file_name) return item.file_name;
+  if (item.source_file) {
+    // If source_file has a prefix like "80e55c78_filename.ext", strip it for display
+    const parts = item.source_file.split("_");
+    if (parts.length > 1 && (parts[0].length === 8 || parts[0].length === 36)) {
+      return parts.slice(1).join("_");
+    }
+    return item.source_file;
+  }
+  return `document_${index + 1}.pdf`;
+};
 
 // Helper to determine file type from filename extension
 const getFileType = (fileName: string): FileType => {
   const ext = fileName.split(".").pop()?.toUpperCase() || "";
   if (ext === "XLSX" || ext === "XLS") return "XLSX";
   if (ext === "DOCX" || ext === "DOC") return "DOCX";
+  if (ext === "XML") return "XML";
   return "PDF";
+};
+
+// Helper to format date strings like "20100115" or ISO strings into readable "15 Jan 2010"
+const formatDate = (dateStr?: string): string => {
+  if (!dateStr || dateStr === "unknown") return "Ingested";
+  // Check if YYYYMMDD format (8 digits)
+  if (/^\d{8}$/.test(dateStr)) {
+    const year = dateStr.substring(0, 4);
+    const monthIdx = parseInt(dateStr.substring(4, 6), 10) - 1;
+    const day = parseInt(dateStr.substring(6, 8), 10);
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    if (monthIdx >= 0 && monthIdx < 12) {
+      return `${day} ${months[monthIdx]} ${year}`;
+    }
+  }
+  // If ISO date string or similar, parse with Date
+  const parsed = new Date(dateStr);
+  if (!isNaN(parsed.getTime())) {
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return `${parsed.getDate()} ${months[parsed.getMonth()]} ${parsed.getFullYear()}`;
+  }
+  return dateStr;
 };
 
 // Map raw backend item to DocumentRecord shape
 const mapBackendRecord = (item: any, index: number, defaultDrug?: string): DocumentRecord => {
-  const fileName = item.source_file || item.filename || item.file_name || `document_${index + 1}.pdf`;
+  const canonicalId = item.source_file || item.filename || item.file_name || item.chunk_id || item.id || `doc-${index}`;
+  const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
-  const source = item.source_type || item.source || "Regulatory / Ingested";
-  const version = item.version || (item.section ? `Sec: ${item.section}` : "v1.0");
-  const fileType = getFileType(fileName);
+  const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
+  
+  const rawVersion = item.label_version || item.version;
+  const version = rawVersion && rawVersion !== "unknown" ? rawVersion : "Not specified";
+  
+  const fileType = getFileType(canonicalId);
 
   let uploadedOn = "Ingested";
-  if (item.effective_date) {
-    uploadedOn = item.effective_date;
+  if (item.effective_date && item.effective_date !== "unknown") {
+    uploadedOn = formatDate(item.effective_date);
+  } else if (item.ingestion_timestamp && item.ingestion_timestamp !== "unknown") {
+    uploadedOn = formatDate(item.ingestion_timestamp);
   } else if (item.page !== undefined && item.page !== null) {
     uploadedOn = `Page ${item.page}`;
   }
 
   return {
-    id: item.chunk_id || item.id || `doc-${index}-${fileName}`,
+    id: canonicalId,
     fileName,
     drug,
     source,
@@ -69,6 +114,7 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
 const FileIcon: React.FC<{ type: FileType }> = ({ type }) => {
   if (type === "XLSX") return <FileSpreadsheet size={15} className="dl-file-icon dl-file-icon--xlsx" />;
   if (type === "DOCX") return <FileType2 size={15} className="dl-file-icon dl-file-icon--docx" />;
+  if (type === "XML") return <FileType2 size={15} className="dl-file-icon dl-file-icon--xml" />;
   return <FileText size={15} className="dl-file-icon dl-file-icon--pdf" />;
 };
 
@@ -180,6 +226,8 @@ export const DocumentLibrary: React.FC = () => {
 
   // Modal state for delete confirmation
   const [docToDelete, setDocToDelete] = useState<DocumentRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Filter state
   const [search, setSearch] = useState("");
@@ -280,14 +328,12 @@ export const DocumentLibrary: React.FC = () => {
       alert(`Inline preview is only supported for PDF documents. "${doc.fileName}" is a ${doc.fileType} file.`);
       return;
     }
-    const viewUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.fileName)}/view`;
+    const viewUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/view`;
     window.open(viewUrl, "_blank", "noopener,noreferrer");
   };
 
   // Handle Download Document action
   const handleDownloadDocument = (doc: DocumentRecord) => {
-    const documentId = doc.id;
-    
     if (doc.fileBlob instanceof Blob) {
       const blobUrl = URL.createObjectURL(doc.fileBlob);
       const link = document.createElement("a");
@@ -300,7 +346,7 @@ export const DocumentLibrary: React.FC = () => {
       return;
     }
 
-    const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(documentId)}/download`;
+    const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
     const link = document.createElement("a");
     link.href = downloadUrl;
     link.download = doc.fileName;
@@ -314,19 +360,47 @@ export const DocumentLibrary: React.FC = () => {
   // Handle Delete Confirmation
   const handleDeleteClick = (doc: DocumentRecord) => {
     setDocToDelete(doc);
+    setDeleteError(null);
   };
 
   const cancelDelete = () => {
+    if (isDeleting) return;
     setDocToDelete(null);
+    setDeleteError(null);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!docToDelete) return;
     const documentId = docToDelete.id;
+    setIsDeleting(true);
+    setDeleteError(null);
 
-    // Remove document from state immediately
-    setDocuments(prev => prev.filter(d => d.id !== documentId));
-    setDocToDelete(null);
+    try {
+      const res = await adminFetch(`${API_BASE}/documents/${encodeURIComponent(documentId)}`, {
+        method: "DELETE",
+      });
+
+      if (!res.ok) {
+        let errDetail = `Delete failed (HTTP ${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson && errJson.detail) {
+            errDetail = typeof errJson.detail === "string" ? errJson.detail : JSON.stringify(errJson.detail);
+          }
+        } catch {
+          // fallback
+        }
+        throw new Error(errDetail);
+      }
+
+      // Backend confirmed deletion — remove from local UI state
+      setDocuments(prev => prev.filter(d => d.id !== documentId));
+      setDocToDelete(null);
+    } catch (err: any) {
+      setDeleteError(err.message || "Failed to delete document from server.");
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const pageRows = useMemo(
@@ -559,10 +633,16 @@ export const DocumentLibrary: React.FC = () => {
               </div>
             </div>
             <div className="dl-modal-actions">
+              {deleteError && (
+                <p style={{ color: "#ef4444", fontSize: "12.5px", margin: "0 0 12px 0", width: "100%" }}>
+                  {deleteError}
+                </p>
+              )}
               <button
                 type="button"
                 className="dl-modal-btn dl-modal-btn--cancel"
                 onClick={cancelDelete}
+                disabled={isDeleting}
               >
                 Cancel
               </button>
@@ -570,8 +650,9 @@ export const DocumentLibrary: React.FC = () => {
                 type="button"
                 className="dl-modal-btn dl-modal-btn--delete"
                 onClick={confirmDelete}
+                disabled={isDeleting}
               >
-                Yes, Delete
+                {isDeleting ? "Deleting..." : "Yes, Delete"}
               </button>
             </div>
           </div>

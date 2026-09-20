@@ -1,3 +1,5 @@
+import { clearAdminKey } from "./adminApi";
+
 export interface User {
   id: string;
   email: string;
@@ -82,6 +84,9 @@ export const mockAuth = {
 
   logout: (): void => {
     localStorage.removeItem(STORAGE_KEY);
+    // Also clear the admin API key from sessionStorage so the tab is fully
+    // de-authenticated when the user logs out.
+    clearAdminKey();
   },
 
   getCurrentUser: (): User | null => {
