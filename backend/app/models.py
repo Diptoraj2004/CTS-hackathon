@@ -14,6 +14,8 @@ class DocumentMetadata(BaseModel):
     source_type: str
     source_identifier: Optional[str] = "unknown"
     original_filename: Optional[str] = None
+
+class Section(BaseModel):
     title: str
     text: str
     subsections: List['Section'] = Field(default_factory=list)
@@ -46,8 +48,11 @@ class Chunk(BaseModel):
     ingestion_timestamp: str
     extraction_method: str
     original_filename: Optional[str] = None
+
+class EmbeddingRecord(BaseModel):
     chunk: Chunk
     embedding: List[float]
+
 
 class OCRResult(BaseModel):
     text: str
