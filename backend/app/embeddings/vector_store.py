@@ -1,3 +1,9 @@
+# DEPRECATED for the live app: the shared pipeline (main.py -> export_to_rag_store
+# -> backend.rag.vector_store) does not use this file. It's Suman's original
+# standalone CLI path (backend/app/ingestion/pipeline.py). Two vector-store
+# implementations still exist side by side -- unifying them is still open,
+# not done in this pass (real risk of breaking whichever path isn't tested
+# right now; needs care, not a rushed merge).
 import lancedb
 import os
 import pyarrow as pa

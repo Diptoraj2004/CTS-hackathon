@@ -15,6 +15,7 @@ from backend.rag.relevance_gate import check
 from backend.rag.retriever import retrieve
 from backend.rag.schemas import Mode, RAGResponse
 from backend.safety import injection_guard
+from backend.safety.redaction import RedactionUnavailable, redact
 
 FALLBACK = {
     "clinician": "Insufficient reliable evidence in the uploaded labels to answer this confidently. "
@@ -52,34 +53,15 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         return _escalate(mode, "Answer not found in the retrieved label sections",
                          gate.top_score, session_id)
 
-    cit = process_citations(gen.text, gate.evidence, question=query)
-    confidence = (gate.top_score + cit.coverage) / 2
+    try:
+        safe_text = redact(gen.text)
+    except RedactionUnavailable as e:
+        # Fail closed: an answer that hasn't been redacted must never reach
+        # citation processing or the user, however good it looks otherwise.
+        return _escalate(mode, f"Redaction unavailable, answer withheld: {e}",
+                         0.0, session_id, risk_level="high")
 
-    if cit.invalid_refs:
-        return _escalate(mode, f"Model cited non-existent sources: {cit.invalid_refs}",
-                         confidence, session_id)
-    if cit.ungrounded_topics:
-        return _escalate(mode, "High-risk topic not covered by the cited label sections: "
-                         + ", ".join(cit.ungrounded_topics), confidence, session_id)
-    if cit.unsupported_numbers:
-        return _escalate(mode, "Numbers in the answer do not match the cited source: "
-                         + " | ".join(cit.unsupported_numbers), confidence, session_id)
-    if not cit.citations:
-        return _escalate(mode, "Answer contains no citations", confidence, session_id)
-    if cit.coverage < config.MIN_CITATION_COVERAGE:
-        return _escalate(mode, f"Only {cit.coverage:.0%} of statements are cited",
-                         confidence, session_id)
-
-    remember_answer(session_id, cit.text)
-    return RAGResponse(mode=mode, answer=cit.text, citations=cit.citations,
-                       status="APPROVED", confidence=round(confidence, 2))
-
-    gen = generate(info, gate.evidence)
-    if NOT_IN_CONTEXT in gen.text:
-        return _escalate(mode, "Answer not found in the retrieved label sections",
-                         gate.top_score, session_id)
-
-    cit = process_citations(gen.text, gate.evidence, question=query)
+    cit = process_citations(safe_text, gate.evidence, question=query)
     confidence = (gate.top_score + cit.coverage) / 2
 
     if cit.invalid_refs:

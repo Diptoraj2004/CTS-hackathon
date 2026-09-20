@@ -16,6 +16,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 WINDOW_SECONDS = 60
 MAX_REQUESTS_PER_WINDOW = 30
 
+# Status polling is a cheap dict lookup, not an LLM/embedding call — the
+# thing the limit exists to protect against. At 1.2s poll interval a single
+# upload over ~36s already blows the shared 30/min budget and starts 429ing
+# a user watching their own upload progress.
+_EXEMPT_PREFIXES = ("/ingest/", )
+_EXEMPT_SUFFIXES = ("/status",)
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
@@ -23,6 +30,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._hits: dict[str, deque] = defaultdict(deque)
 
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path.startswith(_EXEMPT_PREFIXES) and path.endswith(_EXEMPT_SUFFIXES):
+            return await call_next(request)
+
         client_ip = request.client.host if request.client else "unknown"
         now = time.time()
         hits = self._hits[client_ip]
