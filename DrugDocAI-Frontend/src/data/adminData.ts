@@ -14,6 +14,8 @@ export interface DocumentRecord {
   version: string;
   uploadedOn: string;
   status: DocStatus;
+  fileUrl?: string;
+  fileBlob?: Blob;
 }
 
 export const DOCUMENTS: DocumentRecord[] = [
