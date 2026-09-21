@@ -25,6 +25,13 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2")   # local Llama 3 (no key n
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # used only if GROQ_API_KEY is set
 TEMPERATURE = 0.1             # low = factual, consistent answers
 
+# Conversation memory rollover. Token estimation is intentionally conservative
+# and dependency-free; exact provider token counts are not available locally.
+CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "8192"))
+CONTEXT_WARNING_RATIO = float(os.getenv("CONTEXT_WARNING_RATIO", "0.8"))
+CONTEXT_RESPONSE_RESERVE = int(os.getenv("CONTEXT_RESPONSE_RESERVE", "1024"))
+SUMMARY_MAX_TOKENS = int(os.getenv("SUMMARY_MAX_TOKENS", "800"))
+
 # Citation check
 MIN_CITATION_COVERAGE = 0.8   # at least 80% of factual sentences must be cited
 

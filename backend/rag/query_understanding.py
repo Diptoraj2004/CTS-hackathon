@@ -7,6 +7,7 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
@@ -15,6 +16,7 @@ from backend.rag.schemas import Mode, QueryInfo
 from backend.rag.drug_aliases import BRAND_TO_GENERIC, normalize_drug_name
 from backend.rag.vector_store import distinct_values
 from backend.paths import DATA_DIR
+from backend.rag import config
 
 # (label sections to boost, words added to the query, everyday trigger phrases)
 SECTION_RULES = [
@@ -43,7 +45,11 @@ def _session_connection() -> sqlite3.Connection:
     connection.execute("PRAGMA journal_mode=WAL")
     connection.execute("""CREATE TABLE IF NOT EXISTS chat_sessions (
         session_id TEXT PRIMARY KEY,
-        last_used REAL NOT NULL
+        last_used REAL NOT NULL,
+        summary TEXT,
+        parent_session_id TEXT,
+        summary_tokens INTEGER NOT NULL DEFAULT 0,
+        rolled_over_at REAL
     )""")
     connection.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +58,71 @@ def _session_connection() -> sqlite3.Connection:
         content TEXT NOT NULL,
         additional_json TEXT NOT NULL DEFAULT '{}'
     )""")
+    for statement in (
+        "ALTER TABLE chat_sessions ADD COLUMN summary TEXT",
+        "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
+        "ALTER TABLE chat_sessions ADD COLUMN summary_tokens INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE chat_sessions ADD COLUMN rolled_over_at REAL",
+    ):
+        try:
+            connection.execute(statement)
+        except sqlite3.OperationalError:
+            pass
     return connection
+
+
+def estimate_tokens(text: str) -> int:
+    """Conservative, dependency-free estimate for English chat text."""
+    return max(1, (len(text) + 3) // 4)
+
+
+def session_messages(session_id: str) -> list[dict]:
+    connection = _session_connection()
+    rows = connection.execute(
+        "SELECT role, content, additional_json FROM chat_messages WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    connection.close()
+    return [{"role": row["role"], "content": row["content"],
+             "additional": json.loads(row["additional_json"])} for row in rows]
+
+
+def session_summary(session_id: str) -> str | None:
+    connection = _session_connection()
+    row = connection.execute("SELECT summary FROM chat_sessions WHERE session_id = ?", (session_id,)).fetchone()
+    connection.close()
+    return row["summary"] if row and row["summary"] else None
+
+
+def context_status(session_id: str) -> dict:
+    messages = session_messages(session_id)
+    summary = session_summary(session_id) or ""
+    estimated = estimate_tokens(summary) + sum(estimate_tokens(message["content"]) for message in messages)
+    usable_limit = max(0, config.CONTEXT_WINDOW_TOKENS - config.CONTEXT_RESPONSE_RESERVE)
+    warning_threshold = int(config.CONTEXT_WINDOW_TOKENS * config.CONTEXT_WARNING_RATIO)
+    return {
+        "session_id": session_id,
+        "estimated_tokens": estimated,
+        "context_limit": config.CONTEXT_WINDOW_TOKENS,
+        "response_reserve": config.CONTEXT_RESPONSE_RESERVE,
+        "remaining_tokens": max(0, usable_limit - estimated),
+        "warning_threshold": warning_threshold,
+        "near_limit": estimated >= warning_threshold,
+        "message_count": len(messages),
+    }
+
+
+def create_rollover_session(source_session_id: str, summary: str) -> str:
+    new_session_id = str(uuid.uuid4())
+    now = time.time()
+    connection = _session_connection()
+    connection.execute(
+        "INSERT INTO chat_sessions(session_id, last_used, summary, parent_session_id, summary_tokens, rolled_over_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (new_session_id, now, summary, source_session_id, estimate_tokens(summary), now),
+    )
+    connection.commit()
+    connection.close()
+    return new_session_id
 
 # known_drugs() used to call table.to_pandas() -- pulling every row AND
 # every embedding vector into memory -- on every single query, since
@@ -198,8 +268,9 @@ def understand(query: str, mode: Mode, session_id: str = "default",
     query always win, since the user may be asking about a different drug
     than the one they last selected."""
     history = get_history(session_id)
+    summary = session_summary(session_id)
     known = known_drugs()
-    drugs = extract_drugs(query, known)
+    drugs = extract_drugs(" ".join(part for part in (query, summary or "") if part), known)
     if not drugs and drug_hint:
         drugs = resolve_drug_hint(drug_hint, known)
     if not drugs:
@@ -215,7 +286,8 @@ def understand(query: str, mode: Mode, session_id: str = "default",
     history.add_message(HumanMessage(content=query, additional_kwargs={"drugs": drugs}))
     _save_history(session_id, history)
     return QueryInfo(original_query=query, standalone_query=standalone,
-                     drug_names=drugs, section_hints=sections, mode=mode)
+                     drug_names=drugs, section_hints=sections, mode=mode,
+                     conversation_summary=summary)
 
 
 def remember_answer(session_id: str, answer: str) -> None:

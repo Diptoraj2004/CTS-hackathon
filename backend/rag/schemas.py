@@ -43,6 +43,26 @@ class QueryInfo(BaseModel):
     drug_names: list[str] = Field(default_factory=list)
     section_hints: list[str] = Field(default_factory=list)  # e.g. ["Adverse Reactions"]
     mode: Mode
+    conversation_summary: Optional[str] = None
+
+
+class ContextStatus(BaseModel):
+    session_id: str
+    estimated_tokens: int
+    context_limit: int
+    response_reserve: int
+    remaining_tokens: int
+    warning_threshold: int
+    near_limit: bool
+    message_count: int
+
+
+class SessionRollover(BaseModel):
+    old_session_id: str
+    new_session_id: str
+    summary: str
+    prompt_to_send: str
+    status: Literal["ROLLED_OVER"]
 
 
 class Citation(BaseModel):

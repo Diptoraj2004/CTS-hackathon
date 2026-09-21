@@ -17,6 +17,7 @@ from backend.analytics import recent_activity, record_processed, record_upload
 from backend.ingest_jobs import create_job, get_job, update_job
 from backend.paths import DATA_DIR
 from backend.rag import query_understanding
+from backend.rag.context_summarizer import summarize_session
 from backend.rag.drug_aliases import normalize_drug_name
 from backend.rag.generator import GenerationError
 from backend.rag.pipeline import answer as rag_answer
@@ -31,6 +32,7 @@ from backend.safety.auth_store import (authenticate, consume_oauth_state,
 from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
+from backend.rag.schemas import ContextStatus, SessionRollover
 from backend.safety.schemas import (ChatbotResponse, LoginRequest, QueryRequest,
                                     RegisterRequest, ReviewResolution)
 
@@ -91,6 +93,50 @@ def register_user(body: RegisterRequest):
         delete_user(user["id"])
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"user": user, "token": token}
+
+
+@app.get("/session/{session_id}/context-status", response_model=ContextStatus)
+def session_context_status(session_id: str):
+    return query_understanding.context_status(session_id)
+
+
+@app.post("/session/{session_id}/summarize")
+def summarize_chat_session(session_id: str):
+    try:
+        summary = summarize_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GenerationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "session_id": session_id,
+        "summary": summary,
+        "estimated_tokens": query_understanding.estimate_tokens(summary),
+    }
+
+
+@app.post("/session/{session_id}/rollover", response_model=SessionRollover)
+def rollover_chat_session(session_id: str):
+    try:
+        summary = summarize_session(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except GenerationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    new_session_id = query_understanding.create_rollover_session(session_id, summary)
+    prompt = (
+        "Continue our conversation using this retained context. Do not repeat the "
+        "summary; answer my next question using it where relevant.\n\n"
+        + summary
+    )
+    return SessionRollover(
+        old_session_id=session_id,
+        new_session_id=new_session_id,
+        summary=summary,
+        prompt_to_send=prompt,
+        status="ROLLED_OVER",
+    )
 
 
 @app.post("/auth/login")
