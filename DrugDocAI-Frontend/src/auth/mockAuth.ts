@@ -1,4 +1,6 @@
-import { clearAdminKey } from "./adminApi";
+import { clearAdminKey, setAdminKey, validateAdminKey } from "./adminApi";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export interface User {
   id: string;
@@ -33,6 +35,18 @@ export const mockAuth = {
 
     if (!password || password.trim().length === 0) {
       return { success: false, error: "Please enter your password." };
+    }
+
+    if (role === "admin") {
+      // The admin "password" field IS the backend's X-Admin-Key — this used
+      // to accept any non-empty string and never actually checked it, so
+      // admin login was decorative and every adminFetch() call afterward
+      // silently had no key attached.
+      const result = await validateAdminKey(API_BASE, password.trim());
+      if (!result.ok) {
+        return { success: false, error: result.userMessage };
+      }
+      setAdminKey(password.trim());
     }
 
     const user: User = {

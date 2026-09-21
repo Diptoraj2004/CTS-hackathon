@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { AdminLayout } from "../../layouts/AdminLayout";
 import {
   FileText,
@@ -10,8 +10,8 @@ import {
   MoreHorizontal,
   ArrowRight,
 } from "lucide-react";
+import { adminFetch } from "../../auth/adminApi";
 import {
-  kpiData,
   processingActivity,
   sourceDistribution,
   recentUploads,
@@ -19,6 +19,16 @@ import {
   type RecentUpload,
   type ActivityLog,
 } from "../../data/adminData";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+
+interface DashboardStats {
+  documents_indexed: number;
+  chunks_indexed: number;
+  pending_reviews: number;
+  audit_entries: number;
+  audit_chain_valid: boolean;
+}
 
 // ── Tiny SVG Line + Area Chart ────────────────────────────────────────────────
 const ActivityChart: React.FC = () => {
@@ -236,42 +246,71 @@ const KpiCard: React.FC<KpiCardProps> = ({ icon, iconClass, value, label, delta,
 
 // ── Main Dashboard Page ───────────────────────────────────────────────────────
 export const AdminDashboard: React.FC = () => {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    adminFetch(`${API_BASE}/dashboard/stats`)
+      .then((res) => {
+        if (!res.ok) throw new Error(`status ${res.status}`);
+        return res.json();
+      })
+      .then((data: DashboardStats) => {
+        if (!cancelled) setStats(data);
+      })
+      .catch((err) => {
+        if (!cancelled) setStatsError(err.message || "Failed to load stats");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <AdminLayout title="Admin Dashboard">
-      {/* KPI Row */}
+      {statsError && (
+        <div className="admin-card" style={{ marginBottom: "16px", borderLeft: "3px solid #ef4444" }}>
+          <p style={{ margin: 0, fontSize: "13px" }}>Couldn't load live stats ({statsError}) — is the backend running?</p>
+        </div>
+      )}
+
+      {/* KPI Row — every number here is real (/dashboard/stats), not sample data.
+          No trend deltas: this system doesn't track historical KPI snapshots,
+          so a fake "+12 this month" would just be invented. */}
       <div className="admin-kpi-row">
         <KpiCard
           icon={<FileText size={22} />}
           iconClass="admin-kpi-icon--blue"
-          value={kpiData.totalDocuments}
-          label="Total Documents"
-          delta={kpiData.totalDelta}
+          value={stats?.documents_indexed ?? 0}
+          label="Documents Indexed"
+          delta="Live"
           isUp={true}
         />
         <KpiCard
           icon={<CheckCircle2 size={22} />}
           iconClass="admin-kpi-icon--teal"
-          value={kpiData.processedDocuments}
-          label="Processed Documents"
-          delta={kpiData.processedDelta}
+          value={stats?.chunks_indexed ?? 0}
+          label="Chunks Indexed"
+          delta="Live"
           isUp={true}
         />
         <KpiCard
           icon={<Clock size={22} />}
           iconClass="admin-kpi-icon--orange"
-          value={kpiData.processingCount}
-          label="Processing"
-          delta={kpiData.processingDelta}
+          value={stats?.pending_reviews ?? 0}
+          label="Pending Reviews"
+          delta="Live"
           isUp={false}
         />
         <KpiCard
           icon={<AlertTriangle size={22} />}
           iconClass="admin-kpi-icon--red"
-          value={kpiData.processingErrors}
-          label="Processing Errors"
-          delta={kpiData.errorsDelta}
+          value={stats ? (stats.audit_chain_valid ? 0 : 1) : 0}
+          label="Audit Chain"
+          delta={stats ? (stats.audit_chain_valid ? "Valid" : "TAMPERED") : "Live"}
           isUp={false}
-          isError={true}
+          isError={!!stats && !stats.audit_chain_valid}
         />
       </div>
 
