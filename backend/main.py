@@ -13,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from backend.app.ingestion.export_to_rag_store import parse_and_chunk, store_chunks
-from backend.analytics import recent_activity, record_processed, record_upload
+from backend.analytics import (history, recent_activity, record_processed,
+                                record_query, record_source_usage, record_upload)
 from backend.ingest_jobs import create_job, get_job, update_job
 from backend.paths import DATA_DIR
 from backend.rag import query_understanding
@@ -225,6 +226,7 @@ def process_query(req: QueryRequest, request: Request):
 
     needs_review, reason = check_mode_consistency(req.query, req.mode)
     if needs_review:
+        record_query("ESCALATED")
         return _escalate(req.query, req.mode, reason, risk_level="high", ip=ip)
 
     try:
@@ -234,10 +236,12 @@ def process_query(req: QueryRequest, request: Request):
         raise HTTPException(status_code=503, detail="The answer generator is unavailable right now.")
 
     if result.status == "ESCALATED":
+        record_query(result.status)
         return _escalate(req.query, req.mode, result.reason or "insufficient evidence",
                          risk_level=result.risk_level or "low", ip=ip, answer=result.answer)
 
     audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip, status="SUCCESS")
+    record_query(result.status)
     return ChatbotResponse(mode=req.mode, answer=result.answer, citations=result.citations,
                            status=result.status, confidence=result.confidence,
                            confidence_bucket=result.confidence_bucket,
@@ -277,6 +281,7 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
         update_job(job_id, stage="EMBEDDING", detail="Embedding chunks and writing to the vector store.")
         n = store_chunks(chunks)
         record_processed()
+        record_source_usage(chunks[0].source_type or "unknown")
         query_understanding.invalidate_known_drugs_cache()
 
         audit_log.log("INGESTION_ACCEPTED", f"file={original_filename}: {n} chunks stored",
@@ -524,7 +529,7 @@ def dashboard_data():
         source_counts[source] = source_counts.get(source, 0) + 1
     recent_uploads = [
         {**document, "status": "Processed"}
-        for document in documents[-5:]
+        for document in documents[:5]
     ]
     return {
         "source_distribution": [
@@ -535,6 +540,11 @@ def dashboard_data():
         "recent_activity": audit_log.entries(limit=5),
         "processing_activity": recent_activity(),
     }
+
+
+@app.get("/dashboard/history", dependencies=[Depends(require_admin_key)])
+def dashboard_history(days: int = 30):
+    return history(days)
 
 
 if __name__ == "__main__":

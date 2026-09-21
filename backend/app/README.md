@@ -21,7 +21,7 @@ Input (DailyMed/FDA Official Sources PDF/XML) → Format Detection & Parsing →
 ## 4. Folder structure
 - `backend/app/`
   - `ingestion/`: Parsing (PDF/XML), Chunker, OCR logic, Pipeline coordinator.
-  - `embeddings/`: Embedder using Sentence-Transformers, VectorStore using LanceDB.
+  - `embeddings/`: Sentence-Transformers embedder. Vector storage is provided by the canonical `backend.rag.vector_store` module.
   - `metadata/`: Version tagging & registry.
 - `backend/tests/`: Pytest suite.
 - `backend/scripts/`: CLI scripts (e.g., `ingest.py`, `verify_ingestion.py`).

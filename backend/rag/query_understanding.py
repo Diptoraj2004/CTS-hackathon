@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from backend.rag.schemas import Mode, QueryInfo
 from backend.rag.drug_aliases import BRAND_TO_GENERIC, normalize_drug_name
 from backend.rag.vector_store import distinct_values
-from backend.paths import DATA_DIR
+from backend.app.config import SESSION_DB_PATH as CONFIG_SESSION_DB_PATH
 from backend.rag import config
 
 # (label sections to boost, words added to the query, everyday trigger phrases)
@@ -34,7 +34,7 @@ SECTION_RULES = [
 ]
 
 SESSION_TTL_SECONDS = 2 * 60 * 60
-SESSION_DB_PATH = DATA_DIR / "sessions.sqlite3"
+SESSION_DB_PATH = CONFIG_SESSION_DB_PATH
 _sessions_lock = threading.Lock()
 
 

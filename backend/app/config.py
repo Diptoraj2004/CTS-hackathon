@@ -1,7 +1,15 @@
 import os
 from dotenv import load_dotenv
+from pathlib import Path
 
 load_dotenv()
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = Path(os.getenv("DATA_DIR", str(PROJECT_ROOT / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+SESSION_DB_PATH = Path(os.getenv("SESSION_DB_PATH", str(DATA_DIR / "sessions.sqlite3")))
+AUTH_DB_PATH = Path(os.getenv("AUTH_DB_PATH", str(DATA_DIR / "auth.sqlite3")))
+RATE_LIMIT_DB_PATH = Path(os.getenv("RATE_LIMIT_DB_PATH", str(DATA_DIR / "rate_limit.sqlite3")))
 
 class Config:
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 500))

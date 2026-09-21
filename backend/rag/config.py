@@ -3,10 +3,13 @@ import os
 from pathlib import Path
 
 RAG_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = RAG_DIR.parent.parent
+DATA_DIR = PROJECT_ROOT / "data"
 
 # Vector store (LanceDB, embedded, stored on disk — switched from Chroma per
 # the mentor's suggestion: zero-ops, no external hosting, natively multimodal)
-LANCEDB_DIR = RAG_DIR / "lancedb_data"
+LANCEDB_DIR = Path(os.getenv("LANCEDB_DIR", str(DATA_DIR / "lancedb_data")))
+LANCEDB_DIR.mkdir(parents=True, exist_ok=True)
 COLLECTION_NAME = "drug_labels"
 
 # Embedding model: must be the SAME model the ingestion teammate uses

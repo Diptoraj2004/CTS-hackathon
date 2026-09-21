@@ -32,10 +32,11 @@ class PDFParser:
         doc = fitz.open(file_path)
         pages = []
         current_section = "General"
+        pdf_metadata = doc.metadata or {}
         
         for page_num in range(len(doc)):
             page = doc[page_num]
-            text = page.get_text()
+            text = self._extract_layout_text(page)
             
             extraction_method = "pdf_text"
             
@@ -63,8 +64,11 @@ class PDFParser:
             ))
 
         full_text = "\n".join(page.text for page in pages)
-        label_version = self._extract_version(full_text)
-        effective_date = self._extract_date(full_text)
+        header_text = "\n".join(page.text for page in pages[:2])
+        metadata_text = "\n".join(str(pdf_metadata.get(key) or "")
+                        for key in ("title", "subject", "keywords", "modDate", "creationDate"))
+        label_version = self._extract_version("\n".join((metadata_text, header_text, full_text)))
+        effective_date = self._extract_date("\n".join((metadata_text, header_text, full_text)))
         active_ingredient = self._extract_value(
             full_text, r"(?:active\s+ingredient|generic\s+name)\s*[:\-]\s*([^\n;]+)"
         )
@@ -85,6 +89,17 @@ class PDFParser:
         return ParsedDocument(metadata=metadata, pages=pages, sections=[])
 
     @staticmethod
+    def _extract_layout_text(page) -> str:
+        """Read sorted text blocks so headers and section titles survive columns."""
+        blocks = page.get_text("blocks", sort=True)
+        lines = []
+        for block in blocks:
+            if len(block) < 5 or not block[4].strip():
+                continue
+            lines.append(block[4].strip())
+        return "\n".join(lines)
+
+    @staticmethod
     def _section_from_text(text: str) -> str | None:
         for line in text.splitlines():
             candidate = re.sub(r"^\s*(?:\d+(?:\.\d+)*[.)]?\s*[-:]?\s*)", "", line).strip()
@@ -102,14 +117,14 @@ class PDFParser:
     def _extract_version(cls, text: str) -> str | None:
         return cls._extract_value(
             text,
-            r"(?:version|label\s+version|revision\s+number)\s*(?:number)?\s*[:#-]?\s*([vV]?\d+(?:\.\d+){0,3})",
+            r"(?:version|label\s+version|revision\s*(?:number|no\.)?|document\s+number)\s*[:#-]?\s*([vV]?\d+(?:\.\d+){0,3})",
         )
 
     @classmethod
     def _extract_date(cls, text: str) -> str | None:
         value = cls._extract_value(
             text,
-            r"(?:effective|revision|revised|updated|last\s+updated)\s+date\s*[:#-]?\s*([0-9]{4}[-/]\d{1,2}[-/]\d{1,2}|[0-9]{1,2}[-/]\d{1,2}[-/]\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})",
+            r"(?:effective|revision|revised|updated|last\s+updated|label\s+date)\s*date?\s*[:#-]?\s*([0-9]{4}[-/]\d{1,2}[-/]\d{1,2}|[0-9]{1,2}[-/]\d{1,2}[-/]\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})",
         )
         if not value:
             return None
