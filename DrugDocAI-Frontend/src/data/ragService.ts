@@ -10,6 +10,11 @@ export interface RagSource {
   name: string;
   type?: string;
   url?: string;
+  // Raw citation fields from the backend — used by SourcesEvidence
+  doc?: string;
+  section?: string;
+  page?: number | string | null;
+  chunk_id?: string;
 }
 
 export interface RagBulletItem {
@@ -76,7 +81,44 @@ function mapSources(citations: any[]): RagSource[] {
   return (citations || []).map((c, i) => ({
     id: i + 1,
     name: c.page ? `${c.doc} — ${c.section}, p.${c.page}` : `${c.doc} — ${c.section}`,
+    doc: c.doc,
+    section: c.section,
+    page: c.page ?? null,
+    chunk_id: c.chunk_id,
   }));
+}
+
+// ── Citation persistence (sessionStorage) ────────────────────────────────────
+// SourcesEvidence reads this to display real RAG citations without a
+// second network request. Key is scoped by drug+mode so switching drugs
+// does not show stale citations from a previous query.
+const SOURCES_KEY_PREFIX = "drugdoc_last_sources";
+
+export function saveRagSources(
+  drug: string,
+  mode: string,
+  sources: RagSource[]
+): void {
+  try {
+    const key = `${SOURCES_KEY_PREFIX}:${drug.toLowerCase()}:${mode}`;
+    sessionStorage.setItem(key, JSON.stringify(sources));
+  } catch {
+    // sessionStorage can throw in private/restricted contexts — ignore silently.
+  }
+}
+
+export function loadRagSources(
+  drug: string,
+  mode: string
+): RagSource[] | null {
+  try {
+    const key = `${SOURCES_KEY_PREFIX}:${drug.toLowerCase()}:${mode}`;
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw) as RagSource[];
+  } catch {
+    return null;
+  }
 }
 
 // The backend returns "- bullet" lines and inline "[n]" citation markers as
@@ -225,6 +267,11 @@ export async function getRagResponse(
 
   // APPROVED
   const { lead, bullets } = splitAnswer(data.answer || "");
+  const sources = mapSources(data.citations);
+  // Persist citations so SourcesEvidence can display them without re-querying.
+  if (sources.length > 0) {
+    saveRagSources(medication, mode, sources);
+  }
   return {
     question,
     medication,
@@ -238,7 +285,7 @@ export async function getRagResponse(
       ? data.confidence_bucket
       : confidenceBucket(data.confidence ?? 0),
     confidenceDetail: "Based on the documents in the uploaded knowledge base.",
-    sources: mapSources(data.citations),
+    sources,
     requestId: null,
   };
 }

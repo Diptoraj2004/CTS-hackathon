@@ -15,7 +15,7 @@ import {
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
-import { getSourcesForDrug, EvidenceSource } from "../data/evidenceSources";
+import { loadRagSources, RagSource } from "../data/ragService";
 
 export const SourcesEvidence: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -31,12 +31,18 @@ export const SourcesEvidence: React.FC = () => {
       : "Clear, plain-language guidance.";
   const ModeIcon = mode === "professional" ? Stethoscope : HeartHandshake;
 
-  const sourcesList: EvidenceSource[] = getSourcesForDrug(drug);
+  // Load real RAG citations saved by ragService after the last query.
+  // Returns null if the user navigates here before asking a question.
+  const ragSources: RagSource[] | null = loadRagSources(drug, mode);
 
-  // Download action wired to placeholder function using documentId
-  const handleDownloadDocument = (documentId: string, sourceName: string) => {
-    console.log(`[Frontend Placeholder] Downloading document "${sourceName}" (ID: ${documentId})`);
-    alert(`Downloading document: ${sourceName} (ID: ${documentId})`);
+  // Download/view action — citations from the knowledge base are served by
+  // the authenticated document endpoint. Alert if no URL is available.
+  const handleDownloadDocument = (src: RagSource) => {
+    if (src.url) {
+      window.open(src.url, "_blank", "noopener,noreferrer");
+    } else {
+      alert(`Source reference: ${src.name}`);
+    }
   };
 
   const handleBackToAnswer = () => {
@@ -166,72 +172,104 @@ export const SourcesEvidence: React.FC = () => {
               Review the official medical sources used to generate this answer.
             </p>
 
-            {/* List of Reusable Source Cards */}
+            {/* List of Source Cards — real RAG citations or empty state */}
             <div className="f05-sources-list">
-              {sourcesList.map((src, index) => (
-                <article key={src.documentId} className="f05-card">
-                  {/* Card Header */}
-                  <div className="f05-card-header">
-                    <div className="f05-card-header-left">
-                      <span className="f05-source-number">{index + 1}</span>
-                      <div className="f05-source-meta">
-                        <h3 className="f05-source-name">{src.name}</h3>
-                        <span className="f05-source-org">{src.organization}</span>
+              {ragSources === null || ragSources.length === 0 ? (
+                <div
+                  style={{
+                    textAlign: "center",
+                    padding: "40px 20px",
+                    color: "var(--text-muted, #6b7280)",
+                  }}
+                >
+                  <FileText size={32} style={{ marginBottom: "12px", opacity: 0.4 }} />
+                  <p style={{ margin: 0, fontWeight: 600, fontSize: "15px" }}>
+                    No verified evidence available
+                  </p>
+                  <p style={{ margin: "8px 0 0", fontSize: "13px" }}>
+                    Ask a question about {drug} first to see the citations used in the
+                    answer.
+                  </p>
+                </div>
+              ) : (
+                ragSources.map((src, index) => (
+                  <article key={src.id} className="f05-card">
+                    {/* Card Header */}
+                    <div className="f05-card-header">
+                      <div className="f05-card-header-left">
+                        <span className="f05-source-number">{index + 1}</span>
+                        <div className="f05-source-meta">
+                          <h3 className="f05-source-name">
+                            {src.doc ?? src.name}
+                          </h3>
+                          <span className="f05-source-org">
+                            {src.section ? `Section: ${src.section}` : "Ingested Document"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="f05-card-header-right">
+                        <span className="f05-badge f05-badge--official">
+                          Ingested Document
+                        </span>
+                        <button
+                          type="button"
+                          className="f05-download-arrow-btn"
+                          onClick={() => handleDownloadDocument(src)}
+                          aria-label={`View ${src.name}`}
+                          title="View source reference"
+                        >
+                          <ArrowRight size={16} />
+                        </button>
                       </div>
                     </div>
 
-                    <div className="f05-card-header-right">
-                      <span
-                        className={`f05-badge ${
-                          src.sourceType === "Official Label"
-                            ? "f05-badge--official"
-                            : "f05-badge--trusted"
-                        }`}
-                      >
-                        {src.sourceType}
-                      </span>
+                    {/* Location Row */}
+                    <div className="f05-dates-row">
+                      {src.page != null && (
+                        <span>
+                          Page: <strong>{src.page}</strong>
+                        </span>
+                      )}
+                      {src.page != null && src.chunk_id && (
+                        <span className="f05-dates-sep">|</span>
+                      )}
+                      {src.chunk_id && (
+                        <span>
+                          Chunk: <strong>{src.chunk_id}</strong>
+                        </span>
+                      )}
+                      {src.page == null && !src.chunk_id && (
+                        <span style={{ color: "var(--text-muted, #9ca3af)" }}>
+                          No page/chunk reference
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Citation excerpt: show section as context, no fabricated text */}
+                    <div className="f05-excerpt-box">
+                      <span className="f05-quote-mark">“</span>
+                      <p className="f05-excerpt-text">
+                        {src.section
+                          ? `Retrieved from the “${src.section}” section of this document.`
+                          : "Retrieved from the knowledge base."}
+                      </p>
+                    </div>
+
+                    {/* Card Footer */}
+                    <div className="f05-card-footer">
                       <button
                         type="button"
-                        className="f05-download-arrow-btn"
-                        onClick={() => handleDownloadDocument(src.documentId, src.name)}
-                        aria-label={`Download ${src.name}`}
-                        title="Download document"
+                        className="f05-view-source-btn"
+                        onClick={() => handleDownloadDocument(src)}
                       >
-                        <ArrowRight size={16} />
+                        <span>View source</span>
+                        <ArrowRight size={13} />
                       </button>
                     </div>
-                  </div>
-
-                  {/* Dates Row */}
-                  <div className="f05-dates-row">
-                    <span>
-                      Updated: <strong>{src.updatedAt}</strong>
-                    </span>
-                    <span className="f05-dates-sep">|</span>
-                    <span>
-                      Accessed: <strong>{src.accessedAt}</strong>
-                    </span>
-                  </div>
-
-                  {/* Excerpt Box */}
-                  <div className="f05-excerpt-box">
-                    <span className="f05-quote-mark">“</span>
-                    <p className="f05-excerpt-text">{src.excerpt}</p>
-                  </div>
-
-                  {/* Card Footer */}
-                  <div className="f05-card-footer">
-                    <button
-                      type="button"
-                      className="f05-view-source-btn"
-                      onClick={() => handleDownloadDocument(src.documentId, src.name)}
-                    >
-                      <span>View source</span>
-                      <ArrowRight size={13} />
-                    </button>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                ))
+              )}
             </div>
           </div>
         </div>
@@ -275,21 +313,27 @@ export const SourcesEvidence: React.FC = () => {
             <p className="f03-info-card-sub">Information from trusted medical sources.</p>
 
             <div className="f04-sources-list">
-              {sourcesList.map((src, idx) => (
-                <div key={src.documentId} className="f04-source-item">
-                  <span className="f04-source-number">{idx + 1}</span>
-                  <div className="f04-source-details">
-                    <strong className="f04-source-name">{src.name}</strong>
-                    <button
-                      className="f04-source-link"
-                      type="button"
-                      onClick={() => handleDownloadDocument(src.documentId, src.name)}
-                    >
-                      Access data <ArrowRight size={12} />
-                    </button>
+              {ragSources && ragSources.length > 0 ? (
+                ragSources.map((src, idx) => (
+                  <div key={src.id} className="f04-source-item">
+                    <span className="f04-source-number">{idx + 1}</span>
+                    <div className="f04-source-details">
+                      <strong className="f04-source-name">{src.doc ?? src.name}</strong>
+                      <button
+                        className="f04-source-link"
+                        type="button"
+                        onClick={() => handleDownloadDocument(src)}
+                      >
+                        Access data <ArrowRight size={12} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p style={{ fontSize: "13px", color: "var(--text-muted, #9ca3af)", margin: 0 }}>
+                  No citations yet — ask a question first.
+                </p>
+              )}
             </div>
 
             <button
