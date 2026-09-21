@@ -81,10 +81,10 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
   const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
   const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
-  
+
   const rawVersion = item.label_version || item.version;
   const version = rawVersion && rawVersion !== "unknown" ? rawVersion : "Not specified";
-  
+
   const fileType = getFileType(canonicalId);
 
   let uploadedOn = "Ingested";
@@ -333,7 +333,7 @@ export const DocumentLibrary: React.FC = () => {
   };
 
   // Handle Download Document action
-  const handleDownloadDocument = (doc: DocumentRecord) => {
+  const handleDownloadDocument = async (doc: DocumentRecord) => {
     if (doc.fileBlob instanceof Blob) {
       const blobUrl = URL.createObjectURL(doc.fileBlob);
       const link = document.createElement("a");
@@ -346,15 +346,43 @@ export const DocumentLibrary: React.FC = () => {
       return;
     }
 
-    const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = doc.fileName;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const downloadUrl =
+        doc.fileUrl ||
+        `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
+
+      const res = await adminFetch(downloadUrl);
+
+      if (!res.ok) {
+        let detail = `Download failed (HTTP ${res.status})`;
+        try {
+          const errJson = await res.json();
+          if (errJson?.detail) {
+            detail =
+              typeof errJson.detail === "string"
+                ? errJson.detail
+                : JSON.stringify(errJson.detail);
+          }
+        } catch {
+          // Keep fallback error
+        }
+        throw new Error(detail);
+      }
+
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = doc.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      alert(err.message || "Failed to download document.");
+    }
   };
 
   // Handle Delete Confirmation
