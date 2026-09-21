@@ -80,11 +80,11 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
   const canonicalId = item.source_file || item.filename || item.file_name || item.chunk_id || item.id || `doc-${index}`;
   const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
-  const source = item.source_type && item.source_type !== "unknown" ? item.source_type : "Uploaded";
+  const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
   
   const rawVersion = item.label_version || item.version;
   const version = rawVersion && rawVersion !== "unknown" ? rawVersion : "Not specified";
-  
+
   const fileType = getFileType(canonicalId);
 
   let uploadedOn = "Ingested";
@@ -346,19 +346,14 @@ export const DocumentLibrary: React.FC = () => {
     }
 
     const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
-    const response = await adminFetch(downloadUrl);
-    if (!response.ok) {
-      setError(`Download failed (HTTP ${response.status})`);
-      return;
-    }
-    const blobUrl = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
-    link.href = blobUrl;
+    link.href = downloadUrl;
     link.download = doc.fileName;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    URL.revokeObjectURL(blobUrl);
   };
 
   // Handle Delete Confirmation
