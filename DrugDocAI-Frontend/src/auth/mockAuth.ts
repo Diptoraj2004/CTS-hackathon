@@ -100,9 +100,12 @@ export const mockAuth = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: email.trim(), name: name.trim(), password }),
     });
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return { success: false, error: data.detail || "Registration failed." };
+      return {
+        success: false,
+        error: data.detail || `Registration failed (HTTP ${response.status}).`,
+      };
     }
     setAuthToken(data.token);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data.user));

@@ -27,7 +27,7 @@ from backend.safety.audit_log import AuditLog
 from backend.safety.auth import require_admin_key, set_audit_logger
 from backend.safety.auth_store import (authenticate, consume_oauth_state,
                                        create_oauth_state, create_user,
-                                       initialize, issue_token, oauth_user)
+                                       delete_user, initialize, issue_token, oauth_user)
 from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
@@ -76,15 +76,30 @@ def _warm_up_embedder():
 
 @app.post("/auth/register")
 def register_user(body: RegisterRequest):
+    if not os.getenv("AUTH_SECRET"):
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not configured. Set AUTH_SECRET in the backend .env file.",
+        )
     try:
         user = create_user(body.email, body.name, body.password)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
-    return {"user": user, "token": issue_token(user)}
+    try:
+        token = issue_token(user)
+    except RuntimeError as exc:
+        delete_user(user["id"])
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {"user": user, "token": token}
 
 
 @app.post("/auth/login")
 def login_user(body: LoginRequest):
+    if not os.getenv("AUTH_SECRET"):
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not configured. Set AUTH_SECRET in the backend .env file.",
+        )
     user = authenticate(body.email, body.password)
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid credentials.")

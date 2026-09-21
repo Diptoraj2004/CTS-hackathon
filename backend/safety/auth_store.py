@@ -9,7 +9,11 @@ import sqlite3
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from backend.paths import DATA_DIR
+
+load_dotenv()
 
 DB_PATH = Path(os.getenv("AUTH_DB_PATH", str(DATA_DIR / "auth.sqlite3")))
 TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "3600"))
@@ -105,6 +109,13 @@ def authenticate(email: str, password: str) -> dict | None:
     if row is None or row["disabled"] or not verify_password(password, row["password_hash"]):
         return None
     return {"id": str(row["id"]), "email": row["email"], "name": row["name"], "role": row["role"]}
+
+
+def delete_user(user_id: str) -> None:
+    """Remove a user created by a registration that could not be completed."""
+    initialize()
+    with _connection() as connection:
+        connection.execute("DELETE FROM users WHERE id = ?", (user_id,))
 
 
 def oauth_user(provider: str, subject: str, email: str, name: str) -> dict:
