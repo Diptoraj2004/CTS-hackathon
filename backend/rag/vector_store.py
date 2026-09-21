@@ -61,6 +61,8 @@ def add_chunks(chunks: list[Chunk]) -> None:
         db = get_db()
         if config.COLLECTION_NAME in db.list_tables().tables:
             table = db.open_table(config.COLLECTION_NAME)
+            if "original_filename" not in table.schema.names:
+                table.add_columns({"original_filename": "CAST(NULL AS string)"})
             if hasattr(table, "merge_insert"):
                 # True atomic upsert-by-key where the installed LanceDB
                 # supports it -- no window where a chunk_id is briefly
