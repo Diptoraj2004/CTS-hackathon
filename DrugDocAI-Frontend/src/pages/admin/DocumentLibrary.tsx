@@ -77,7 +77,7 @@ const formatDate = (dateStr?: string): string => {
 
 // Map raw backend item to DocumentRecord shape
 const mapBackendRecord = (item: any, index: number, defaultDrug?: string): DocumentRecord => {
-  const canonicalId = item.source_file || item.filename || item.file_name || item.chunk_id || item.id || `doc-${index}`;
+  const canonicalId = item.source_file || item.id || item.filename || item.file_name || item.chunk_id || `doc-${index}`;
   const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
   const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
@@ -322,13 +322,22 @@ export const DocumentLibrary: React.FC = () => {
   };
 
   // Handle View Document action
-  const handleViewDocument = (doc: DocumentRecord) => {
+  const handleViewDocument = async (doc: DocumentRecord) => {
     if (doc.fileType !== "PDF") {
       alert(`Inline preview is only supported for PDF documents. "${doc.fileName}" is a ${doc.fileType} file.`);
       return;
     }
-    const viewUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/view`;
-    window.open(viewUrl, "_blank", "noopener,noreferrer");
+    
+    try {
+      const viewUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/view`;
+      const res = await adminFetch(viewUrl);
+      if (!res.ok) throw new Error(`Failed to fetch document (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      alert(err.message || "An error occurred while fetching the document.");
+    }
   };
 
   // Handle Download Document action
@@ -345,15 +354,23 @@ export const DocumentLibrary: React.FC = () => {
       return;
     }
 
-    const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = doc.fileName;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
+      const res = await adminFetch(downloadUrl);
+      if (!res.ok) throw new Error(`Failed to download document (HTTP ${res.status})`);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = doc.fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err: any) {
+      alert(err.message || "An error occurred while downloading the document.");
+    }
   };
 
   // Handle Delete Confirmation

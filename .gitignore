@@ -39,3 +39,6 @@ Thumbs.db
 *.db
 # Frontend dependencies
 node_modules/
+# Runtime SQLite files
+data/*.sqlite3
+data/*.sqlite3-*

@@ -11,6 +11,7 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { adminFetch } from "../../auth/adminApi";
+import type { RecentUpload, ActivityLog } from "../../data/adminData";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 

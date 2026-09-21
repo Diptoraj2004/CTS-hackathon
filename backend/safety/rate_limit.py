@@ -18,7 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from backend.paths import DATA_DIR
 
 WINDOW_SECONDS = 60
-MAX_REQUESTS_PER_WINDOW = 30
+MAX_REQUESTS_PER_WINDOW = 120
 
 # Status polling is a cheap dict lookup, not an LLM/embedding call — the
 # thing the limit exists to protect against. At 1.2s poll interval a single
@@ -67,6 +67,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return True
 
     async def dispatch(self, request: Request, call_next):
+        # OPTIONS preflights are browser-generated; they carry no payload and
+        # should not consume the rate-limit budget.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
         if path.startswith(_EXEMPT_PREFIXES) and path.endswith(_EXEMPT_SUFFIXES):
             return await call_next(request)

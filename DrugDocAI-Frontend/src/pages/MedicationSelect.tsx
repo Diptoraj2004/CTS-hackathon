@@ -15,7 +15,7 @@ import {
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
-import { popularDrugs } from "../data/medications";
+import { popularDrugs, exampleDrugs } from "../data/medications";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 

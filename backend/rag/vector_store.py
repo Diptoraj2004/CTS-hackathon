@@ -54,7 +54,8 @@ def distinct_values(column: str) -> list[str]:
     except TypeError:
         # Older LanceDB versions may not accept the columns keyword, but can
         # still project columns through the table's scanner.
-        rows = table.to_lance().scanner(columns=[column]).to_arrow().column(column).to_pylist()
+        # For newer versions (e.g. 0.38+), use search().select().
+        rows = table.search().select([column]).to_arrow().column(column).to_pylist()
     return sorted({str(value) for value in rows if value not in (None, "")})
 
 
@@ -71,7 +72,7 @@ def document_records() -> list[dict]:
     try:
         rows = table.to_arrow(columns=columns).to_pylist()
     except TypeError:
-        rows = table.to_lance().scanner(columns=columns).to_arrow().to_pylist()
+        rows = table.search().select(columns).to_arrow().to_pylist()
 
     documents = {}
     for row in rows:
