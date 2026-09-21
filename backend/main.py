@@ -179,7 +179,38 @@ def ingest_status(job_id: str):
         raise HTTPException(status_code=404, detail="unknown job id")
     return job
 
+@app.get("/documents/{filename}/download", dependencies=[Depends(require_admin_key)])
+def download_document(filename: str, request: Request):
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
 
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        audit_log.log(
+            "UNAUTHORIZED_FILE_ACCESS",
+            f"attempted_file={safe_filename}",
+            status="BLOCKED",
+            ip=_client_ip(request),
+        )
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found.")
+
+    audit_log.log(
+        "DOCUMENT_DOWNLOADED",
+        f"filename={safe_filename}",
+        ip=_client_ip(request),
+        resource=f"document:{safe_filename}",
+        status="SUCCESS",
+    )
+
+    return FileResponse(
+        path=file_path,
+        headers={
+            "Content-Disposition": f'attachment; filename="{safe_filename}"'
+        },
+    )
+    
 @app.get("/documents/{filename}/view")
 def view_document(filename: str):
     safe_filename = os.path.basename(filename)
