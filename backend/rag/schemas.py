@@ -59,6 +59,7 @@ class RAGResponse(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     status: Literal["APPROVED", "ESCALATED"]
     confidence: float = 0.0
+    confidence_bucket: Literal["low", "medium", "high"] = "low"
     reason: Optional[str] = None    # why it was escalated, if it was
     risk_level: Optional[Literal["low", "high"]] = None  # "high" = mode-consistency/
     # safety escalation (PRD's Edge Case #1); "low" = evidence-quality escalation

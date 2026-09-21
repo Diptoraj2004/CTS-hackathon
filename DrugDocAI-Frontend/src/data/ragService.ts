@@ -26,7 +26,7 @@ export interface RagResponse {
   bulletPoints: RagBulletItem[];
   answerFollowUp: string;
   disclaimer: string;
-  confidence: "High" | "Medium" | "Low" | "low" | "high";
+  confidence: "High" | "Medium" | "Low" | "low" | "medium" | "high";
   confidenceDetail: string;
   sources: RagSource[];
   requestId?: string | null;
@@ -234,7 +234,9 @@ export async function getRagResponse(
     bulletPoints: bullets,
     answerFollowUp: "",
     disclaimer: DISCLAIMER,
-    confidence: confidenceBucket(data.confidence ?? 0),
+    confidence: data.confidence_bucket
+      ? data.confidence_bucket
+      : confidenceBucket(data.confidence ?? 0),
     confidenceDetail: "Based on the documents in the uploaded knowledge base.",
     sources: mapSources(data.citations),
     requestId: null,

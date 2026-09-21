@@ -1,5 +1,5 @@
 -r backend/rag/requirements.txt
 -r backend/safety/requirements.txt
-fastapi
-uvicorn[standard]
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
 -r backend/app/requirements.txt

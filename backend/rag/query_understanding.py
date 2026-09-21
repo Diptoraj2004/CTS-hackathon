@@ -1,7 +1,10 @@
 """Query understanding: drug extraction, follow-up resolution (LangChain memory),
 and section hints, producing a standalone query for retrieval."""
 import difflib
+import json
+import os
 import re
+import sqlite3
 import threading
 import time
 
@@ -9,7 +12,9 @@ from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 
 from backend.rag.schemas import Mode, QueryInfo
-from backend.rag.vector_store import get_table
+from backend.rag.drug_aliases import BRAND_TO_GENERIC, normalize_drug_name
+from backend.rag.vector_store import distinct_values
+from backend.paths import DATA_DIR
 
 # (label sections to boost, words added to the query, everyday trigger phrases)
 SECTION_RULES = [
@@ -26,14 +31,28 @@ SECTION_RULES = [
      ["used for", "what is it for", "indicat", "treat"]),
 ]
 
-# session_id -> (last_used_timestamp, history). /query runs as a plain `def`
-# route, which FastAPI dispatches to its threadpool -- concurrent requests
-# really do run on different OS threads, so this dict needs a lock, not just
-# careful ordering. TTL eviction keeps it from growing forever with no
-# restart in sight during a multi-day demo/eval window.
 SESSION_TTL_SECONDS = 2 * 60 * 60
-_sessions: dict[str, tuple[float, InMemoryChatMessageHistory]] = {}
+SESSION_DB_PATH = DATA_DIR / "sessions.sqlite3"
 _sessions_lock = threading.Lock()
+
+
+def _session_connection() -> sqlite3.Connection:
+    path = os.getenv("SESSION_DB_PATH", str(SESSION_DB_PATH))
+    connection = sqlite3.connect(path, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("""CREATE TABLE IF NOT EXISTS chat_sessions (
+        session_id TEXT PRIMARY KEY,
+        last_used REAL NOT NULL
+    )""")
+    connection.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        additional_json TEXT NOT NULL DEFAULT '{}'
+    )""")
+    return connection
 
 # known_drugs() used to call table.to_pandas() -- pulling every row AND
 # every embedding vector into memory -- on every single query, since
@@ -47,23 +66,43 @@ _known_drugs_cache: tuple[float, list[str]] | None = None
 _known_drugs_lock = threading.Lock()
 
 
-def _prune_expired_sessions_locked() -> None:
-    """Caller must already hold _sessions_lock."""
-    cutoff = time.time() - SESSION_TTL_SECONDS
-    for sid in [s for s, (last_used, _) in _sessions.items() if last_used < cutoff]:
-        del _sessions[sid]
-
-
 def get_history(session_id: str) -> InMemoryChatMessageHistory:
     now = time.time()
     with _sessions_lock:
-        _prune_expired_sessions_locked()
-        if session_id in _sessions:
-            _, hist = _sessions[session_id]
-        else:
-            hist = InMemoryChatMessageHistory()
-        _sessions[session_id] = (now, hist)
+        connection = _session_connection()
+        connection.execute("DELETE FROM chat_sessions WHERE last_used < ?",
+                           (now - SESSION_TTL_SECONDS,))
+        connection.execute("DELETE FROM chat_messages WHERE session_id NOT IN (SELECT session_id FROM chat_sessions)")
+        rows = connection.execute(
+            "SELECT role, content, additional_json FROM chat_messages WHERE session_id = ? ORDER BY id",
+            (session_id,),
+        ).fetchall()
+        hist = InMemoryChatMessageHistory()
+        for row in rows:
+            if row["role"] == "human":
+                hist.add_message(HumanMessage(content=row["content"], additional_kwargs=json.loads(row["additional_json"])))
+            else:
+                hist.add_message(AIMessage(content=row["content"]))
+        connection.execute("INSERT INTO chat_sessions(session_id, last_used) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET last_used=excluded.last_used", (session_id, now))
+        connection.commit()
+        connection.close()
         return hist
+
+
+def _save_history(session_id: str, history: InMemoryChatMessageHistory) -> None:
+    with _sessions_lock:
+        connection = _session_connection()
+        connection.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        for message in history.messages:
+            role = "human" if isinstance(message, HumanMessage) else "ai"
+            additional = getattr(message, "additional_kwargs", {})
+            connection.execute(
+                "INSERT INTO chat_messages(session_id, role, content, additional_json) VALUES (?, ?, ?, ?)",
+                (session_id, role, message.content, json.dumps(additional)),
+            )
+        connection.execute("INSERT INTO chat_sessions(session_id, last_used) VALUES (?, ?) ON CONFLICT(session_id) DO UPDATE SET last_used=excluded.last_used", (session_id, time.time()))
+        connection.commit()
+        connection.close()
 
 
 def forget(session_id: str) -> bool:
@@ -72,7 +111,13 @@ def forget(session_id: str) -> bool:
     nothing to clear (already gone / never existed). Called by
     DELETE /session/{session_id} in main.py."""
     with _sessions_lock:
-        return _sessions.pop(session_id, None) is not None
+        connection = _session_connection()
+        existed = connection.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (session_id,)).fetchone() is not None
+        connection.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
+        connection.commit()
+        connection.close()
+        return existed
 
 
 def invalidate_known_drugs_cache() -> None:
@@ -91,8 +136,7 @@ def known_drugs() -> list[str]:
         if _known_drugs_cache is not None and now - _known_drugs_cache[0] < _KNOWN_DRUGS_TTL_SECONDS:
             return _known_drugs_cache[1]
 
-    table = get_table()
-    drugs = sorted(set(table.to_pandas()["drug_name"].tolist())) if table is not None else []
+    drugs = distinct_values("drug_name")
 
     with _known_drugs_lock:
         _known_drugs_cache = (now, drugs)
@@ -102,9 +146,14 @@ def known_drugs() -> list[str]:
 def extract_drugs(query: str, known: list[str]) -> list[str]:
     q = query.lower()
     found = [d for d in known if re.search(r"\b" + re.escape(d) + r"\b", q)]
+    for alias, canonical in BRAND_TO_GENERIC.items():
+        if not re.search(r"\b" + re.escape(alias) + r"\b", q):
+            continue
+        if canonical in known and canonical not in found:
+            found.append(canonical)
     if not found:  # tolerate typos, e.g. "amoxicilin"
         for token in re.findall(r"[a-z][a-z\-]{4,}", q):
-            match = difflib.get_close_matches(token, known, n=1, cutoff=0.8)
+            match = difflib.get_close_matches(normalize_drug_name(token), known, n=1, cutoff=0.8)
             if match and match[0] not in found:
                 found.append(match[0])
     return found
@@ -114,7 +163,7 @@ def resolve_drug_hint(drug_hint: str, known: list[str]) -> list[str]:
     """Turn a frontend-supplied drug name (e.g. from a dropdown) into a
     canonical name from the vector store, if it matches one. Only used as
     a fallback when the query text itself didn't mention a drug name."""
-    h = drug_hint.strip().lower()
+    h = normalize_drug_name(drug_hint)
     if not h:
         return []
     if h in known:
@@ -164,12 +213,15 @@ def understand(query: str, mode: Mode, session_id: str = "default",
     standalone = " ".join(parts)
 
     history.add_message(HumanMessage(content=query, additional_kwargs={"drugs": drugs}))
+    _save_history(session_id, history)
     return QueryInfo(original_query=query, standalone_query=standalone,
                      drug_names=drugs, section_hints=sections, mode=mode)
 
 
 def remember_answer(session_id: str, answer: str) -> None:
-    get_history(session_id).add_message(AIMessage(content=answer))
+    history = get_history(session_id)
+    history.add_message(AIMessage(content=answer))
+    _save_history(session_id, history)
 
 
 if __name__ == "__main__":

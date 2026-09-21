@@ -7,11 +7,15 @@ by itself. What this actually does: stops one client from hammering the
 LLM/embedding calls and running up cost or starving other users, which is
 the realistic risk for a hackathon demo, not a botnet."""
 import time
-from collections import defaultdict, deque
+import os
+import sqlite3
+from pathlib import Path
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+
+from backend.paths import DATA_DIR
 
 WINDOW_SECONDS = 60
 MAX_REQUESTS_PER_WINDOW = 30
@@ -27,7 +31,40 @@ _EXEMPT_SUFFIXES = ("/status",)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        self._hits: dict[str, deque] = defaultdict(deque)
+        self._db_path = Path(os.getenv("RATE_LIMIT_DB_PATH", str(DATA_DIR / "rate_limit.sqlite3")))
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._connect() as connection:
+            connection.execute("""CREATE TABLE IF NOT EXISTS rate_limit_hits (
+                client_key TEXT NOT NULL,
+                hit_at REAL NOT NULL
+            )""")
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_rate_limit_hits ON rate_limit_hits(client_key, hit_at)"
+            )
+
+    def _connect(self) -> sqlite3.Connection:
+        connection = sqlite3.connect(self._db_path, timeout=10, isolation_level=None)
+        connection.execute("PRAGMA journal_mode=WAL")
+        return connection
+
+    def _allow(self, client_key: str, now: float) -> bool:
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cutoff = now - WINDOW_SECONDS
+            connection.execute("DELETE FROM rate_limit_hits WHERE hit_at <= ?", (cutoff,))
+            count = connection.execute(
+                "SELECT COUNT(*) FROM rate_limit_hits WHERE client_key = ? AND hit_at > ?",
+                (client_key, cutoff),
+            ).fetchone()[0]
+            if count >= MAX_REQUESTS_PER_WINDOW:
+                connection.execute("COMMIT")
+                return False
+            connection.execute(
+                "INSERT INTO rate_limit_hits(client_key, hit_at) VALUES (?, ?)",
+                (client_key, now),
+            )
+            connection.execute("COMMIT")
+            return True
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -36,16 +73,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = request.client.host if request.client else "unknown"
         now = time.time()
-        hits = self._hits[client_ip]
-
-        while hits and now - hits[0] > WINDOW_SECONDS:
-            hits.popleft()
-
-        if len(hits) >= MAX_REQUESTS_PER_WINDOW:
+        if not self._allow(client_ip, now):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Too many requests. Please slow down."},
             )
-
-        hits.append(now)
         return await call_next(request)

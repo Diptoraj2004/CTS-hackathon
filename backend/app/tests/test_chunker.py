@@ -37,3 +37,29 @@ def test_chunker_sections():
     assert len(chunks) == 1
     assert chunks[0].section == "Indications"
     assert chunks[0].source_type == "xml"
+
+
+def test_split_text_packs_complete_sentences():
+    chunker = Chunker(chunk_size=45, chunk_overlap=10)
+
+    chunks = chunker._split_text(
+        "First sentence is complete. Second sentence is also complete. "
+        "Third sentence finishes the example."
+    )
+
+    assert len(chunks) == 3
+    assert all(chunk.endswith((".", "!", "?")) for chunk in chunks)
+    assert all(len(chunk) <= 45 for chunk in chunks)
+
+
+def test_split_text_bounds_a_single_long_sentence():
+    chunker = Chunker(chunk_size=20, chunk_overlap=5)
+
+    chunks = chunker._split_text("This sentence is deliberately much longer than one chunk.")
+
+    assert len(chunks) > 1
+    assert all(len(chunk) <= 20 for chunk in chunks)
+
+
+def test_split_text_ignores_blank_input():
+    assert Chunker(chunk_size=20)._split_text(" \n\n ") == []

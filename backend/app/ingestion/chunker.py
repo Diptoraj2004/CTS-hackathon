@@ -1,4 +1,5 @@
 import uuid
+import re
 from typing import List
 from backend.app.models import ParsedDocument, Chunk, Section
 from backend.app.config import Config
@@ -9,26 +10,45 @@ class Chunker:
         self.chunk_overlap = chunk_overlap or Config.CHUNK_OVERLAP
 
     def _split_text(self, text: str) -> List[str]:
-        paragraphs = text.split('\n\n')
-        chunks = []
-        current_chunk = ""
-        
-        for p in paragraphs:
-            if len(current_chunk) + len(p) < self.chunk_size:
-                current_chunk += p + "\n\n"
-            else:
-                if current_chunk:
-                    chunks.append(current_chunk.strip())
-                if len(p) > self.chunk_size:
-                    for i in range(0, len(p), self.chunk_size - self.chunk_overlap):
-                        chunks.append(p[i:i + self.chunk_size].strip())
-                    current_chunk = ""
-                else:
-                    current_chunk = p + "\n\n"
-        
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-            
+        normalized = re.sub(r"\s+", " ", text).strip()
+        if not normalized:
+            return []
+
+        sentences = re.split(r"(?<=[.!?])\s+", normalized)
+        sentences = [sentence.strip() for sentence in sentences if sentence.strip()]
+        chunks: List[str] = []
+        current: List[str] = []
+
+        def flush() -> None:
+            if current:
+                chunks.append(" ".join(current).strip())
+
+        for sentence in sentences:
+            if len(sentence) > self.chunk_size:
+                flush()
+                current.clear()
+                step = max(1, self.chunk_size - self.chunk_overlap)
+                chunks.extend(
+                    sentence[start:start + self.chunk_size].strip()
+                    for start in range(0, len(sentence), step)
+                )
+                continue
+
+            candidate = " ".join(current + [sentence])
+            if current and len(candidate) > self.chunk_size:
+                previous = current[:]
+                flush()
+                current.clear()
+                overlap_length = 0
+                for prior_sentence in reversed(previous):
+                    if overlap_length + len(prior_sentence) + 1 > self.chunk_overlap:
+                        break
+                    current.insert(0, prior_sentence)
+                    overlap_length += len(prior_sentence) + 1
+
+            current.append(sentence)
+
+        flush()
         return chunks
 
     def chunk_document(self, doc: ParsedDocument) -> List[Chunk]:
@@ -70,8 +90,8 @@ class Chunker:
                         set_id=meta.set_id,
                         drug_name=meta.drug_name,
                         active_ingredient=meta.active_ingredient,
-                        section="General",
-                        subsection=None,
+                        section=page.section,
+                        subsection=page.subsection,
                         page_number=page.page_number,
                         source_file=meta.source_file,
                         source_type=meta.source_type,

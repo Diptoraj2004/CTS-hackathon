@@ -9,6 +9,7 @@ latency on top of an already-slow LLM call. The scan is folded in here
 instead, so main.py just calls answer() once and gets everything."""
 from backend.rag import config
 from backend.rag.citation import process as process_citations
+from backend.rag.confidence import bucket_for, calibrated_score
 from backend.rag.generator import NOT_IN_CONTEXT, generate
 from backend.rag.query_understanding import remember_answer, understand
 from backend.rag.relevance_gate import check
@@ -30,7 +31,9 @@ def _escalate(mode: Mode, reason: str, confidence: float, session_id: str,
               risk_level: str = "low") -> RAGResponse:
     remember_answer(session_id, FALLBACK[mode])
     return RAGResponse(mode=mode, answer=FALLBACK[mode], status="ESCALATED",
-                       confidence=round(confidence, 2), reason=reason, risk_level=risk_level)
+                       confidence=round(calibrated_score(confidence), 2),
+                       confidence_bucket=bucket_for(confidence), reason=reason,
+                       risk_level=risk_level)
 
 
 def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str | None = None) -> RAGResponse:
@@ -62,7 +65,7 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
                          0.0, session_id, risk_level="high")
 
     cit = process_citations(safe_text, gate.evidence, question=query)
-    confidence = (gate.top_score + cit.coverage) / 2
+    confidence = calibrated_score((gate.top_score + cit.coverage) / 2)
 
     if cit.invalid_refs:
         return _escalate(mode, f"Model cited non-existent sources: {cit.invalid_refs}",
@@ -81,7 +84,8 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
 
     remember_answer(session_id, cit.text)
     return RAGResponse(mode=mode, answer=cit.text, citations=cit.citations,
-                       status="APPROVED", confidence=round(confidence, 2))
+                       status="APPROVED", confidence=round(confidence, 2),
+                       confidence_bucket=bucket_for(confidence))
 
 
 if __name__ == "__main__":

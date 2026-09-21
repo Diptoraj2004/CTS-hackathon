@@ -24,6 +24,8 @@ class Page(BaseModel):
     page_number: int
     text: str
     extraction_method: str = "pdf_text"
+    section: str = "General"
+    subsection: Optional[str] = None
 
 class ParsedDocument(BaseModel):
     metadata: DocumentMetadata

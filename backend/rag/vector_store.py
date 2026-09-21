@@ -43,6 +43,52 @@ def get_table():
     return None
 
 
+def distinct_values(column: str) -> list[str]:
+    """Read one metadata column without materializing the embedding table."""
+    table = get_table()
+    if table is None or column not in table.schema.names:
+        return []
+
+    try:
+        rows = table.to_arrow(columns=[column]).column(column).to_pylist()
+    except TypeError:
+        # Older LanceDB versions may not accept the columns keyword, but can
+        # still project columns through the table's scanner.
+        rows = table.to_lance().scanner(columns=[column]).to_arrow().column(column).to_pylist()
+    return sorted({str(value) for value in rows if value not in (None, "")})
+
+
+def document_records() -> list[dict]:
+    """Return one metadata record per source file, without loading vectors."""
+    table = get_table()
+    if table is None:
+        return []
+    columns = ["source_file", "original_filename", "drug_name", "source_type",
+               "version", "effective_date", "ingestion_timestamp"]
+    columns = [column for column in columns if column in table.schema.names]
+    if "source_file" not in columns:
+        return []
+    try:
+        rows = table.to_arrow(columns=columns).to_pylist()
+    except TypeError:
+        rows = table.to_lance().scanner(columns=columns).to_arrow().to_pylist()
+
+    documents = {}
+    for row in rows:
+        source_file = row.get("source_file")
+        if source_file and source_file not in documents:
+            documents[source_file] = {
+                "id": source_file,
+                "filename": row.get("original_filename") or source_file,
+                "drug_name": row.get("drug_name") or "unknown",
+                "source_type": row.get("source_type") or "unknown",
+                "version": row.get("version") or "unknown",
+                "effective_date": row.get("effective_date") or "unknown",
+                "ingestion_timestamp": row.get("ingestion_timestamp"),
+            }
+    return sorted(documents.values(), key=lambda item: item["filename"].lower())
+
+
 def _row(chunk: Chunk, vector: list[float]) -> dict:
     row = chunk.model_dump(exclude_none=True)
     row["vector"] = vector

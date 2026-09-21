@@ -11,14 +11,6 @@ import {
   ArrowRight,
 } from "lucide-react";
 import { adminFetch } from "../../auth/adminApi";
-import {
-  processingActivity,
-  sourceDistribution,
-  recentUploads,
-  recentActivity,
-  type RecentUpload,
-  type ActivityLog,
-} from "../../data/adminData";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -30,31 +22,37 @@ interface DashboardStats {
   audit_chain_valid: boolean;
 }
 
+interface DashboardData {
+  source_distribution: { name: string; count: number }[];
+  recent_uploads: any[];
+  recent_activity: any[];
+  processing_activity: { label: string; uploaded: number; processed: number }[];
+}
+
 // ── Tiny SVG Line + Area Chart ────────────────────────────────────────────────
-const ActivityChart: React.FC = () => {
+const ActivityChart: React.FC<{ data: { label: string; uploaded: number; processed: number }[] }> = ({ data }) => {
   const W = 440;
   const H = 160;
   const PAD = { top: 10, right: 12, bottom: 32, left: 28 };
-  const data = processingActivity;
-
-  const maxVal = Math.max(...data.map((d) => Math.max(d.uploaded, d.processed)));
+  const chartData = data.length ? data : [{ label: "No data", uploaded: 0, processed: 0 }];
+  const maxVal = Math.max(...chartData.map((d) => Math.max(d.uploaded, d.processed)));
   const yMax = Math.ceil(maxVal / 5) * 5 || 20;
 
-  const xStep = (W - PAD.left - PAD.right) / (data.length - 1);
+  const xStep = chartData.length > 1 ? (W - PAD.left - PAD.right) / (chartData.length - 1) : 0;
   const yScale = (v: number) => PAD.top + ((yMax - v) / yMax) * (H - PAD.top - PAD.bottom);
   const xOf = (i: number) => PAD.left + i * xStep;
 
   const polyPoints = (key: "uploaded" | "processed") =>
-    data.map((d, i) => `${xOf(i)},${yScale(d[key])}`).join(" ");
+    chartData.map((d, i) => `${xOf(i)},${yScale(d[key])}`).join(" ");
 
   const areaPath = (key: "uploaded" | "processed") => {
-    const pts = data.map((d, i) => `${xOf(i)},${yScale(d[key])}`).join(" L ");
+    const pts = chartData.map((d, i) => `${xOf(i)},${yScale(d[key])}`).join(" L ");
     const bottom = H - PAD.bottom;
-    return `M ${xOf(0)},${yScale(data[0][key])} L ${pts} L ${xOf(data.length - 1)},${bottom} L ${xOf(0)},${bottom} Z`;
+    return `M ${xOf(0)},${yScale(chartData[0][key])} L ${pts} L ${xOf(chartData.length - 1)},${bottom} L ${xOf(0)},${bottom} Z`;
   };
 
   // Tick x-labels: show every ~5 steps
-  const xTicks = data
+  const xTicks = chartData
     .map((d, i) => ({ i, label: d.label }))
     .filter((_, i) => i % 5 === 0 || i === data.length - 1);
 
@@ -111,8 +109,8 @@ const ActivityChart: React.FC = () => {
       />
 
       {/* Dots on key points */}
-      {data.map((d, i) =>
-        i % 5 === 0 || i === data.length - 1 ? (
+      {chartData.map((d, i) =>
+        i % 5 === 0 || i === chartData.length - 1 ? (
           <g key={i}>
             <circle cx={xOf(i)} cy={yScale(d.uploaded)}  r="3" fill="#3b82f6" />
             <circle cx={xOf(i)} cy={yScale(d.processed)} r="3" fill="#12888b" />
@@ -136,8 +134,8 @@ const ActivityChart: React.FC = () => {
 };
 
 // ── Donut Chart ───────────────────────────────────────────────────────────────
-const DonutChart: React.FC = () => {
-  const total = sourceDistribution.reduce((s, d) => s + d.count, 0);
+const DonutChart: React.FC<{ data: { name: string; count: number; color?: string }[] }> = ({ data }) => {
+  const total = data.reduce((s, d) => s + d.count, 0);
   const R = 68;
   const cx = 90;
   const cy = 90;
@@ -145,11 +143,11 @@ const DonutChart: React.FC = () => {
 
   const segments = useMemo(() => {
     let cumulative = 0;
-    return sourceDistribution.map((seg) => {
-      const pct = seg.count / total;
+    return data.map((seg, index) => {
+      const pct = total ? seg.count / total : 0;
       const start = cumulative;
       cumulative += pct;
-      return { ...seg, pct, start };
+      return { ...seg, color: seg.color || ["#003d41", "#12888b", "#f5c27a", "#d9a97b"][index % 4], pct, start };
     });
   }, [total]);
 
@@ -247,6 +245,7 @@ const KpiCard: React.FC<KpiCardProps> = ({ icon, iconClass, value, label, delta,
 // ── Main Dashboard Page ───────────────────────────────────────────────────────
 export const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [dashboardData, setDashboardData] = useState<DashboardData>({ source_distribution: [], recent_uploads: [], recent_activity: [], processing_activity: [] });
   const [statsError, setStatsError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -266,6 +265,14 @@ export const AdminDashboard: React.FC = () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    adminFetch(`${API_BASE}/dashboard/data`)
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`status ${res.status}`)))
+      .then((data: DashboardData) => setDashboardData(data))
+      .catch(() => undefined);
+  }, []);
+
 
   return (
     <AdminLayout title="Admin Dashboard">
@@ -332,7 +339,7 @@ export const AdminDashboard: React.FC = () => {
               <span className="admin-chart-legend-item admin-chart-legend-item--teal">Processed</span>
             </div>
           </div>
-          <ActivityChart />
+          <ActivityChart data={dashboardData.processing_activity} />
         </div>
 
         {/* Source Distribution */}
@@ -344,7 +351,7 @@ export const AdminDashboard: React.FC = () => {
               </h2>
             </div>
           </div>
-          <DonutChart />
+          <DonutChart data={dashboardData.source_distribution} />
         </div>
       </div>
 
@@ -371,12 +378,12 @@ export const AdminDashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {recentUploads.map((row) => (
-                <tr key={row.id}>
-                  <td className="admin-table-filename">{row.fileName}</td>
-                  <td>{row.source}</td>
+              {dashboardData.recent_uploads.map((row: any, index) => (
+                <tr key={row.id || row.filename || index}>
+                  <td className="admin-table-filename">{row.fileName || row.filename}</td>
+                  <td>{row.source || row.source_type}</td>
                   <td><StatusBadge status={row.status} /></td>
-                  <td className="admin-table-date">{row.uploadedOn.replace("\n", " ")}</td>
+                  <td className="admin-table-date">{(row.uploadedOn || row.ingestion_timestamp || "").replace("\n", " ")}</td>
                   <td>
                     <button className="admin-action-dots" aria-label="Actions">
                       <MoreHorizontal size={16} />
@@ -408,17 +415,17 @@ export const AdminDashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {recentActivity.map((row) => (
-                <tr key={row.id}>
-                  <td className="admin-table-time">{row.time}</td>
-                  <td>{row.user}</td>
+              {dashboardData.recent_activity.map((row: any, index) => (
+                <tr key={row.id || index}>
+                  <td className="admin-table-time">{new Date((row.timestamp || 0) * 1000).toLocaleString()}</td>
+                  <td>{row.user || "system"}</td>
                   <td>
                     <span className="admin-activity-action">
-                      <ActivityDot color={row.dotColor} />
-                      {row.action}
+                      <ActivityDot color="teal" />
+                      {row.event_type || row.action}
                     </span>
                   </td>
-                  <td className="admin-table-detail">{row.details}</td>
+                  <td className="admin-table-detail">{row.details || row.resource || ""}</td>
                 </tr>
               ))}
             </tbody>

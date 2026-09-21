@@ -1,28 +1,38 @@
 """Core API. See pipeline.py, ingest_jobs.py, audit_log.py, review_queue.py,
 redaction.py, auth.py module docstrings for the reasoning behind each piece."""
 import os
+import secrets
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
 from backend.app.ingestion.export_to_rag_store import parse_and_chunk, store_chunks
+from backend.analytics import recent_activity, record_processed, record_upload
 from backend.ingest_jobs import create_job, get_job, update_job
 from backend.paths import DATA_DIR
 from backend.rag import query_understanding
+from backend.rag.drug_aliases import normalize_drug_name
 from backend.rag.generator import GenerationError
 from backend.rag.pipeline import answer as rag_answer
-from backend.rag.vector_store import delete_by_source_file, get_embedder, get_table
+from backend.rag.vector_store import (delete_by_source_file, distinct_values,
+                                      document_records, get_embedder, get_table)
 from backend.safety import injection_guard, redaction
 from backend.safety.audit_log import AuditLog
 from backend.safety.auth import require_admin_key, set_audit_logger
+from backend.safety.auth_store import (authenticate, consume_oauth_state,
+                                       create_oauth_state, create_user,
+                                       initialize, issue_token, oauth_user)
 from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
-from backend.safety.schemas import ChatbotResponse, QueryRequest, ReviewResolution
+from backend.safety.schemas import (ChatbotResponse, LoginRequest, QueryRequest,
+                                    RegisterRequest, ReviewResolution)
 
 app = FastAPI(title="DrugDocQA Core API", version="0.8")
 
@@ -57,10 +67,75 @@ def _client_ip(request: Request) -> str | None:
 
 @app.on_event("startup")
 def _warm_up_embedder():
+    initialize()
     get_embedder()
     status = redaction.redaction_status()
     if not status["active"]:
         print(f"[startup] WARNING: PII/PHI redaction is disabled — {status['reason']}")
+
+
+@app.post("/auth/register")
+def register_user(body: RegisterRequest):
+    try:
+        user = create_user(body.email, body.name, body.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"user": user, "token": issue_token(user)}
+
+
+@app.post("/auth/login")
+def login_user(body: LoginRequest):
+    user = authenticate(body.email, body.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid credentials.")
+    return {"user": user, "token": issue_token(user), "expires_in": 3600}
+
+
+@app.get("/auth/google/start")
+def google_auth_start():
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+    if not client_id or not os.getenv("GOOGLE_CLIENT_SECRET"):
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured on this server.")
+    state = secrets.token_urlsafe(32)
+    create_oauth_state(state)
+    params = urllib.parse.urlencode({
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "access_type": "offline",
+        "prompt": "select_account",
+    })
+    return {"authorization_url": "https://accounts.google.com/o/oauth2/v2/auth?" + params}
+
+
+@app.get("/auth/google/callback")
+def google_auth_callback(code: str | None = None, state: str | None = None,
+                         error: str | None = None):
+    frontend = os.getenv("OAUTH_FRONTEND_REDIRECT", "http://localhost:5173/login")
+    if error or not code or not state or not consume_oauth_state(state):
+        return RedirectResponse(frontend + "?oauth_error=Google+sign-in+was+cancelled+or+expired")
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/auth/google/callback")
+    token_body = urllib.parse.urlencode({
+        "code": code, "client_id": os.environ["GOOGLE_CLIENT_ID"],
+        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+        "redirect_uri": redirect_uri, "grant_type": "authorization_code",
+    }).encode()
+    token_request = urllib.request.Request("https://oauth2.googleapis.com/token", data=token_body, method="POST")
+    try:
+        token_data = __import__("json").loads(urllib.request.urlopen(token_request, timeout=10).read())
+        profile_request = urllib.request.Request(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {token_data['access_token']}"},
+        )
+        profile = __import__("json").loads(urllib.request.urlopen(profile_request, timeout=10).read())
+        user = oauth_user("google", profile["sub"], profile["email"], profile.get("name", "Google user"))
+        query = urllib.parse.urlencode({"oauth_token": issue_token(user)})
+        return RedirectResponse(frontend + "?" + query)
+    except (KeyError, OSError, ValueError, __import__("json").JSONDecodeError):
+        return RedirectResponse(frontend + "?oauth_error=Google+sign-in+failed")
 
 
 def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None) -> ChatbotResponse:
@@ -93,7 +168,10 @@ def process_query(req: QueryRequest, request: Request):
 
     audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip, status="SUCCESS")
     return ChatbotResponse(mode=req.mode, answer=result.answer, citations=result.citations,
-                           status="APPROVED", confidence=result.confidence)
+                           status=result.status, confidence=result.confidence,
+                           confidence_bucket=result.confidence_bucket,
+                           reason=result.reason, risk_level=result.risk_level,
+                           request_id=None)
 
 
 def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str | None,
@@ -127,6 +205,7 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
 
         update_job(job_id, stage="EMBEDDING", detail="Embedding chunks and writing to the vector store.")
         n = store_chunks(chunks)
+        record_processed()
         query_understanding.invalidate_known_drugs_cache()
 
         audit_log.log("INGESTION_ACCEPTED", f"file={original_filename}: {n} chunks stored",
@@ -153,9 +232,10 @@ async def ingest_document(file: UploadFile, drug_name: str, request: Request, do
         raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024*1024)} MB limit.")
 
     safe_filename = os.path.basename(file.filename or "upload")
-    clean_drug_name = drug_name.strip().lower()
+    clean_drug_name = normalize_drug_name(drug_name)
 
     job = create_job(filename=file.filename, drug_name=clean_drug_name, doc_id=doc_id)
+    record_upload()
     stored_path = UPLOAD_DIR / f"{job['job_id'][:8]}_{safe_filename}"
     stored_path.write_bytes(content)
 
@@ -200,6 +280,18 @@ def view_document(filename: str):
                         headers={"Content-Disposition": f'inline; filename="{safe_filename}"'})
 
 
+@app.get("/documents/{filename}/download", dependencies=[Depends(require_admin_key)])
+def download_document(filename: str):
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        raise HTTPException(status_code=403, detail="Access denied.")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Document not found.")
+    return FileResponse(path=file_path, filename=safe_filename,
+                        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'})
+
+
 @app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])
 def delete_document(filename: str, request: Request):
     safe_filename = os.path.basename(filename)
@@ -225,25 +317,31 @@ def _json_safe_records(df):
 
 @app.get("/sources")
 def list_sources():
-    table = get_table()
-    if table is None:
-        return []
-    df = table.to_pandas()
-    cols = [c for c in ["drug_name", "source_file", "original_filename", "version",
-                        "effective_date", "source_type"] if c in df.columns]
-    return _json_safe_records(df[cols].drop_duplicates())
+    return document_records()
 
 
 @app.get("/sources/{drug_name}")
 def sources_for_drug(drug_name: str):
-    table = get_table()
-    if table is None:
-        return []
-    df = table.to_pandas()
-    df = df[df["drug_name"].str.lower() == drug_name.lower()]
-    cols = [c for c in ["chunk_id", "section", "source_file", "original_filename", "version", "page"]
-            if c in df.columns]
-    return _json_safe_records(df[cols])
+    return [item for item in document_records()
+            if item["drug_name"].lower() == drug_name.lower()]
+
+
+@app.get("/documents", dependencies=[Depends(require_admin_key)])
+def list_documents(page: int = 1, page_size: int = 25, drug: str | None = None,
+                   source_type: str | None = None, search: str | None = None):
+    if page < 1 or page_size < 1 or page_size > 100:
+        raise HTTPException(status_code=422, detail="page must be positive and page_size must be 1-100")
+    documents = document_records()
+    if drug:
+        documents = [item for item in documents if item["drug_name"].lower() == drug.lower()]
+    if source_type:
+        documents = [item for item in documents if item["source_type"].lower() == source_type.lower()]
+    if search:
+        needle = search.lower()
+        documents = [item for item in documents if needle in item["filename"].lower()]
+    start = (page - 1) * page_size
+    return {"items": documents[start:start + page_size], "page": page,
+            "page_size": page_size, "total": len(documents)}
 
 
 @app.get("/drugs")
@@ -312,12 +410,7 @@ def dashboard_stats():
     n_documents = 0
     if table is not None:
         n_chunks = table.count_rows()
-        # honest note: this still loads the full table into pandas to get a
-        # distinct source_file count — no lighter path found in the pinned
-        # LanceDB API without risking an untested call. Correct now
-        # (documents, not drugs); not yet optimized.
-        df = table.to_pandas()
-        n_documents = df["source_file"].nunique() if "source_file" in df.columns else 0
+        n_documents = len(distinct_values("source_file"))
     ok, _ = audit_log.verify()
     return {
         "documents_indexed": n_documents,
@@ -325,6 +418,32 @@ def dashboard_stats():
         "pending_reviews": len(review_queue.pending()),
         "audit_entries": len(audit_log),
         "audit_chain_valid": ok,
+    }
+
+
+@app.get("/dashboard/data", dependencies=[Depends(require_admin_key)])
+def dashboard_data():
+    documents = sorted(
+        document_records(),
+        key=lambda item: item.get("ingestion_timestamp") or "",
+        reverse=True,
+    )
+    source_counts = {}
+    for document in documents:
+        source = document["source_type"]
+        source_counts[source] = source_counts.get(source, 0) + 1
+    recent_uploads = [
+        {**document, "status": "Processed"}
+        for document in documents[-5:]
+    ]
+    return {
+        "source_distribution": [
+            {"name": name, "count": count}
+            for name, count in sorted(source_counts.items())
+        ],
+        "recent_uploads": recent_uploads,
+        "recent_activity": audit_log.entries(limit=5),
+        "processing_activity": recent_activity(),
     }
 
 

@@ -80,7 +80,7 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
   const canonicalId = item.source_file || item.filename || item.file_name || item.chunk_id || item.id || `doc-${index}`;
   const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
-  const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
+  const source = item.source_type && item.source_type !== "unknown" ? item.source_type : "Uploaded";
   
   const rawVersion = item.label_version || item.version;
   const version = rawVersion && rawVersion !== "unknown" ? rawVersion : "Not specified";
@@ -237,15 +237,14 @@ export const DocumentLibrary: React.FC = () => {
   const [filterStatus, setStatus] = useState<DocStatus | "">("");
   const [page, setPage] = useState(1);
 
-  // Fetch sources from backend
+  // Fetch document-level metadata from the protected backend endpoint.
   const fetchSources = useCallback(async (selectedDrug?: string) => {
     setLoading(true);
     setError(null);
     try {
-      const url = selectedDrug?.trim()
-        ? `${API_BASE}/sources/${encodeURIComponent(selectedDrug.trim())}`
-        : `${API_BASE}/sources`;
-      const res = await fetch(url);
+      const params = new URLSearchParams({ page: "1", page_size: "100" });
+      if (selectedDrug?.trim()) params.set("drug", selectedDrug.trim());
+      const res = await adminFetch(`${API_BASE}/documents?${params.toString()}`);
       if (!res.ok) {
         let errText = `Failed to fetch documents (HTTP ${res.status})`;
         try {
@@ -259,10 +258,10 @@ export const DocumentLibrary: React.FC = () => {
         throw new Error(errText);
       }
       const data = await res.json();
-      if (!Array.isArray(data)) {
+      if (!data || !Array.isArray(data.items)) {
         throw new Error("Invalid response format received from server.");
       }
-      const mapped = data.map((item, idx) => mapBackendRecord(item, idx, selectedDrug));
+      const mapped = data.items.map((item: any, idx: number) => mapBackendRecord(item, idx, selectedDrug));
       setDocuments(mapped);
     } catch (err: any) {
       setError(err.message || "An error occurred while loading document sources.");
@@ -333,7 +332,7 @@ export const DocumentLibrary: React.FC = () => {
   };
 
   // Handle Download Document action
-  const handleDownloadDocument = (doc: DocumentRecord) => {
+  const handleDownloadDocument = async (doc: DocumentRecord) => {
     if (doc.fileBlob instanceof Blob) {
       const blobUrl = URL.createObjectURL(doc.fileBlob);
       const link = document.createElement("a");
@@ -347,14 +346,19 @@ export const DocumentLibrary: React.FC = () => {
     }
 
     const downloadUrl = doc.fileUrl || `${API_BASE}/documents/${encodeURIComponent(doc.id)}/download`;
+    const response = await adminFetch(downloadUrl);
+    if (!response.ok) {
+      setError(`Download failed (HTTP ${response.status})`);
+      return;
+    }
+    const blobUrl = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
-    link.href = downloadUrl;
+    link.href = blobUrl;
     link.download = doc.fileName;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+    URL.revokeObjectURL(blobUrl);
   };
 
   // Handle Delete Confirmation

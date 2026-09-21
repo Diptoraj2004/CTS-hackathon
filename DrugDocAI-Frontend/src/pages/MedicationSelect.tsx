@@ -15,7 +15,9 @@ import {
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
-import { popularDrugs, exampleDrugs } from "../data/medications";
+import { popularDrugs } from "../data/medications";
+
+const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export const MedicationSelect: React.FC = () => {
   const navigate = useNavigate();
@@ -24,8 +26,24 @@ export const MedicationSelect: React.FC = () => {
   const [showWarning, setShowWarning] = useState(false);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [availableDrugs, setAvailableDrugs] = useState<string[]>(popularDrugs);
+  const [drugLoadError, setDrugLoadError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/drugs`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json();
+      })
+      .then((data: { drugs?: string[] }) => {
+        if (Array.isArray(data.drugs) && data.drugs.length > 0) {
+          setAvailableDrugs(data.drugs);
+        }
+      })
+      .catch(() => setDrugLoadError("Live medication list unavailable; showing common medications."));
+  }, []);
 
   // Close suggestions when clicking outside
   useEffect(() => {
@@ -53,7 +71,7 @@ export const MedicationSelect: React.FC = () => {
       return;
     }
 
-    const filtered = popularDrugs.filter((drug) =>
+    const filtered = availableDrugs.filter((drug) =>
       drug.toLowerCase().includes(value.trim().toLowerCase())
     );
     setSuggestions(filtered);
@@ -213,7 +231,7 @@ export const MedicationSelect: React.FC = () => {
             <div className="popular-searches-section">
               <h3 className="section-label">Popular Searches</h3>
               <div className="chips-container">
-                {popularDrugs.map((drug) => (
+                {(availableDrugs.length ? availableDrugs : popularDrugs).slice(0, 12).map((drug) => (
                   <button
                     key={drug}
                     type="button"
@@ -224,6 +242,7 @@ export const MedicationSelect: React.FC = () => {
                   </button>
                 ))}
               </div>
+              {drugLoadError && <p className="form-hint" role="status">{drugLoadError}</p>}
             </div>
 
             <div className="card-divider" />

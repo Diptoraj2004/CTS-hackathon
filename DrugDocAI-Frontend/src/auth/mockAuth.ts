@@ -1,4 +1,4 @@
-import { clearAdminKey, setAdminKey, validateAdminKey } from "./adminApi";
+import { clearAdminKey, setAuthToken } from "./adminApi";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -23,9 +23,6 @@ export const mockAuth = {
     password?: string,
     role: "user" | "admin" = "user"
   ): Promise<AuthResponse> => {
-    // Simulated async delay
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
     if (!identifier || identifier.trim().length === 0) {
       return {
         success: false,
@@ -38,15 +35,31 @@ export const mockAuth = {
     }
 
     if (role === "admin") {
-      // The admin "password" field IS the backend's X-Admin-Key — this used
-      // to accept any non-empty string and never actually checked it, so
-      // admin login was decorative and every adminFetch() call afterward
-      // silently had no key attached.
-      const result = await validateAdminKey(API_BASE, password.trim());
-      if (!result.ok) {
-        return { success: false, error: result.userMessage };
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: identifier.trim(), password }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.user?.role !== "admin") {
+        return { success: false, error: data.detail || "Administrator authentication failed." };
       }
-      setAdminKey(password.trim());
+      setAuthToken(data.token);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data.user));
+      return { success: true, user: data.user };
+    } else {
+      const response = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: identifier.trim(), password }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        return { success: false, error: data.detail || "Authentication failed." };
+      }
+      setAuthToken(data.token);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data.user));
+      return { success: true, user: data.user };
     }
 
     const user: User = {
@@ -65,9 +78,6 @@ export const mockAuth = {
     email: string,
     password?: string
   ): Promise<AuthResponse> => {
-    // Simulated async delay
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
     if (!name || name.trim().length === 0) {
       return { success: false, error: "Please enter your full name." };
     }
@@ -85,15 +95,18 @@ export const mockAuth = {
       return { success: false, error: "Password must be at least 8 characters long." };
     }
 
-    const user: User = {
-      id: "usr_" + Math.random().toString(36).substring(2, 9),
-      email: email.trim(),
-      name: name.trim(),
-      role: "user",
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    return { success: true, user };
+    const response = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email.trim(), name: name.trim(), password }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      return { success: false, error: data.detail || "Registration failed." };
+    }
+    setAuthToken(data.token);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data.user));
+    return { success: true, user: data.user };
   },
 
   logout: (): void => {

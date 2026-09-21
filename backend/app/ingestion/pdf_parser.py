@@ -3,6 +3,22 @@ from backend.app.models import Page, ParsedDocument, DocumentMetadata
 from backend.app.ingestion.ocr import is_poor_extraction, run_ocr
 import datetime
 import os
+import re
+
+
+SECTION_HEADINGS = {
+    "INDICATIONS AND USAGE": "Indications and Usage",
+    "DOSAGE AND ADMINISTRATION": "Dosage and Administration",
+    "DOSAGE & ADMINISTRATION": "Dosage and Administration",
+    "CONTRAINDICATIONS": "Contraindications",
+    "WARNINGS AND PRECAUTIONS": "Warnings and Precautions",
+    "ADVERSE REACTIONS": "Adverse Reactions",
+    "USE IN SPECIFIC POPULATIONS": "Use in Specific Populations",
+    "DESCRIPTION": "Description",
+    "CLINICAL PHARMACOLOGY": "Clinical Pharmacology",
+    "HOW SUPPLIED": "How Supplied",
+    "PATIENT COUNSELING INFORMATION": "Patient Counseling Information",
+}
 
 class PDFParser:
     def __init__(self, use_ocr: bool = True):
@@ -15,6 +31,7 @@ class PDFParser:
         """
         doc = fitz.open(file_path)
         pages = []
+        current_section = "General"
         
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -33,20 +50,32 @@ class PDFParser:
                     extraction_method = "ocr"
                 else:
                     text = "" # Fallback failed or empty
+
+            detected_section = self._section_from_text(text)
+            if detected_section:
+                current_section = detected_section
             
             pages.append(Page(
                 page_number=page_num + 1,
                 text=text,
-                extraction_method=extraction_method
+                extraction_method=extraction_method,
+                section=current_section,
             ))
+
+        full_text = "\n".join(page.text for page in pages)
+        label_version = self._extract_version(full_text)
+        effective_date = self._extract_date(full_text)
+        active_ingredient = self._extract_value(
+            full_text, r"(?:active\s+ingredient|generic\s+name)\s*[:\-]\s*([^\n;]+)"
+        )
             
         metadata = DocumentMetadata(
             document_id=doc_id,
             set_id="unknown",
             drug_name=drug_name,
-            active_ingredient="unknown",
-            label_version="unknown",
-            effective_date="unknown",
+            active_ingredient=active_ingredient or "unknown",
+            label_version=label_version or "unknown",
+            effective_date=effective_date or "unknown",
             ingestion_timestamp=datetime.datetime.utcnow().isoformat(),
             source_file=os.path.basename(file_path),
             source_type="pdf",
@@ -54,3 +83,39 @@ class PDFParser:
         )
         
         return ParsedDocument(metadata=metadata, pages=pages, sections=[])
+
+    @staticmethod
+    def _section_from_text(text: str) -> str | None:
+        for line in text.splitlines():
+            candidate = re.sub(r"^\s*(?:\d+(?:\.\d+)*[.)]?\s*[-:]?\s*)", "", line).strip()
+            normalized = re.sub(r"\s+", " ", candidate).upper().rstrip(":")
+            if normalized in SECTION_HEADINGS:
+                return SECTION_HEADINGS[normalized]
+        return None
+
+    @staticmethod
+    def _extract_value(text: str, pattern: str) -> str | None:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        return match.group(1).strip() if match else None
+
+    @classmethod
+    def _extract_version(cls, text: str) -> str | None:
+        return cls._extract_value(
+            text,
+            r"(?:version|label\s+version|revision\s+number)\s*(?:number)?\s*[:#-]?\s*([vV]?\d+(?:\.\d+){0,3})",
+        )
+
+    @classmethod
+    def _extract_date(cls, text: str) -> str | None:
+        value = cls._extract_value(
+            text,
+            r"(?:effective|revision|revised|updated|last\s+updated)\s+date\s*[:#-]?\s*([0-9]{4}[-/]\d{1,2}[-/]\d{1,2}|[0-9]{1,2}[-/]\d{1,2}[-/]\d{4}|[A-Za-z]+\s+\d{1,2},?\s+\d{4})",
+        )
+        if not value:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%m/%d/%Y", "%B %d, %Y", "%B %d %Y"):
+            try:
+                return datetime.datetime.strptime(value, fmt).date().isoformat()
+            except ValueError:
+                continue
+        return value

@@ -14,7 +14,7 @@ import {
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import { mockAuth } from "../auth/mockAuth";
-import { validateAdminKey, setAdminKey } from "../auth/adminApi";
+import { setAuthToken } from "../auth/adminApi";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -43,12 +43,46 @@ export const Login: React.FC = () => {
   const [agreeTerms, setAgreeTerms] = useState(false);
   const [regError, setRegError] = useState("");
   const [isRegLoading, setIsRegLoading] = useState(false);
+  const [googleError, setGoogleError] = useState("");
+
+  const handleGoogleSignIn = async () => {
+    setGoogleError("");
+    try {
+      const response = await fetch(`${API_BASE}/auth/google/start`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Google sign-in is unavailable.");
+      window.location.assign(data.authorization_url);
+    } catch (oauthError) {
+      setGoogleError(oauthError instanceof Error ? oauthError.message : "Google sign-in is unavailable.");
+    }
+  };
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const oauthToken = params.get("oauth_token");
+    const oauthError = params.get("oauth_error");
+    if (oauthToken) {
+      try {
+        const payload = oauthToken.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
+        const user = JSON.parse(atob(payload + "=".repeat((4 - payload.length % 4) % 4)));
+        setAuthToken(oauthToken);
+        localStorage.setItem("drugdoc_mock_user", JSON.stringify(user));
+        navigate(user.role === "admin" ? "/admin" : "/select", { replace: true });
+        return;
+      } catch {
+        setError("Google sign-in returned an invalid session.");
+      }
+    }
+    if (oauthError) setError(oauthError);
     if (location.hash === "#register") {
       setViewMode("register");
+      setRole("user");
+    } else if (location.hash === "#admin") {
+      setViewMode("login");
+      setRole("admin");
     } else {
       setViewMode("login");
+      setRole("user");
     }
   }, [location.hash]);
 
@@ -72,26 +106,21 @@ export const Login: React.FC = () => {
 
     if (!password.trim()) {
       setError(
-        role === "admin" ? "Please enter your Admin API Key." : "Please enter your password."
+        role === "admin" ? "Please enter your administrator password." : "Please enter your password."
       );
+      return;
+    }
+    if (password.length < 8) {
+      setError("Password must be at least 8 characters long.");
       return;
     }
 
     setIsLoading(true);
     try {
       if (role === "admin") {
-        // Admin path: validate the entered key against the backend probe.
-        // The key is stored in sessionStorage ONLY after the backend confirms it.
-        const result = await validateAdminKey(API_BASE, password);
-        if (!result.ok) {
-          setError(result.userMessage);
-          return;
-        }
-        // Backend confirmed the key — store for this tab session only.
-        setAdminKey(password);
-        // Record a local mock user so the rest of the app knows the role.
-        await mockAuth.login(identifier, password, "admin");
-        navigate("/admin");
+        const res = await mockAuth.login(identifier, password, "admin");
+        if (res.success) navigate("/admin");
+        else setError(res.error || "Administrator authentication failed.");
       } else {
         // User path: existing mock auth, unchanged.
         const res = await mockAuth.login(identifier, password, "user");
@@ -346,7 +375,7 @@ export const Login: React.FC = () => {
                   <span>OR</span>
                 </div>
 
-                <button type="button" className="google-sign-in-btn">
+                <button type="button" className="google-sign-in-btn" onClick={handleGoogleSignIn}>
                   <svg className="google-icon" width="18" height="18" viewBox="0 0 24 24">
                     <path
                       fill="#4285F4"
@@ -367,6 +396,7 @@ export const Login: React.FC = () => {
                   </svg>
                   <span>Continue with Google</span>
                 </button>
+                {googleError && <p className="login-error-banner" role="alert">{googleError}</p>}
 
                 <div className="create-account-wrap">
                   <span>Already have an account?</span>{" "}
@@ -465,10 +495,10 @@ export const Login: React.FC = () => {
                   </div>
                 </div>
 
-                {/* PASSWORD / API KEY FIELD */}
+                {/* PASSWORD FIELD */}
                 <div className="form-group">
                   <label className="form-label">
-                    {role === "admin" ? "Admin API Key" : "Password"}
+                    {role === "admin" ? "Administrator Password" : "Password"}
                   </label>
                   <div className="input-with-icon">
                     <Lock size={17} className="input-icon" />
@@ -476,7 +506,7 @@ export const Login: React.FC = () => {
                       type={showPassword ? "text" : "password"}
                       className="form-input password-input"
                       placeholder={
-                        role === "admin" ? "Enter your Admin API Key" : "Enter your password"
+                        role === "admin" ? "Enter your administrator password" : "Enter your password"
                       }
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -523,7 +553,7 @@ export const Login: React.FC = () => {
                     <span>OR</span>
                   </div>
 
-                  <button type="button" className="google-sign-in-btn">
+                  <button type="button" className="google-sign-in-btn" onClick={handleGoogleSignIn}>
                     <svg className="google-icon" width="18" height="18" viewBox="0 0 24 24">
                       <path
                         fill="#4285F4"
@@ -544,6 +574,7 @@ export const Login: React.FC = () => {
                     </svg>
                     <span>Continue with Google</span>
                   </button>
+                  {googleError && <p className="login-error-banner" role="alert">{googleError}</p>}
 
                   <div className="create-account-wrap">
                     <span>Don't have an account?</span>{" "}

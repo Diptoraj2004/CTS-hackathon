@@ -16,6 +16,17 @@ class QueryRequest(BaseModel):
     # query_understanding.understand()'s drug_hint parameter.
 
 
+class RegisterRequest(BaseModel):
+    email: str = Field(..., min_length=3)
+    name: str = Field(..., min_length=1)
+    password: str = Field(..., min_length=8)
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
 class DocumentUploadRequest(BaseModel):
     file_path: str
 

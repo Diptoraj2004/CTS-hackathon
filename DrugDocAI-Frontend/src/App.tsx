@@ -10,7 +10,6 @@ import { ResultsPlaceholder } from "./pages/ResultsPlaceholder";
 import { ProfilePlaceholder } from "./pages/ProfilePlaceholder";
 import { RequireAdmin } from "./auth/RequireAdmin";
 import { AdminDashboard } from "./pages/admin/AdminDashboard";
-import { AdminPlaceholderPage } from "./pages/admin/AdminPlaceholderPage";
 import { DocumentLibrary } from "./pages/admin/DocumentLibrary";
 import { UploadProcessing } from "./pages/admin/UploadProcessing";
 import { AuditLogs } from "./pages/admin/AuditLogs";
@@ -33,8 +32,6 @@ function App() {
       <Route path="/admin/library"   element={<RequireAdmin><DocumentLibrary /></RequireAdmin>} />
       <Route path="/admin/upload"    element={<RequireAdmin><UploadProcessing /></RequireAdmin>} />
       <Route path="/admin/audit"     element={<RequireAdmin><AuditLogs /></RequireAdmin>} />
-      <Route path="/admin/integrity" element={<RequireAdmin><AdminPlaceholderPage section="integrity" /></RequireAdmin>} />
-      <Route path="/admin/support"   element={<RequireAdmin><AdminPlaceholderPage section="support" /></RequireAdmin>} />
 
       {/* ── Fallback ── */}
       <Route path="*" element={<Landing />} />
