@@ -153,9 +153,15 @@ def google_auth_callback(code: str | None = None, state: str | None = None,
         return RedirectResponse(frontend + "?oauth_error=Google+sign-in+failed")
 
 
-def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None) -> ChatbotResponse:
+def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None,
+              answer: str = "") -> ChatbotResponse:
+    if risk_level == "none":
+        # Off-topic (not drug-related), not a safety matter — don't clutter
+        # the human review queue with "what's the weather" style questions.
+        return ChatbotResponse(mode=mode, answer=answer, status="ESCALATED",
+                               reason=reason, risk_level=risk_level, request_id=None)
     result = review_queue.flag(query, mode, reason)
-    return ChatbotResponse(mode=mode, answer="", status="ESCALATED",
+    return ChatbotResponse(mode=mode, answer=answer, status="ESCALATED",
                            reason=reason, risk_level=risk_level, request_id=result["request_id"])
 
 
@@ -165,7 +171,11 @@ def process_query(req: QueryRequest, request: Request):
 
     if injection_guard.looks_like_injection(req.query):
         audit_log.log("INJECTION_BLOCKED", req.query[:200], ip=ip, status="BLOCKED")
-        raise HTTPException(status_code=400, detail="That query couldn't be processed.")
+        raise HTTPException(
+            status_code=400,
+            detail="This query appears to contain an embedded instruction rather than a genuine "
+                  "question, which violates usage policy — it wasn't processed.",
+        )
 
     needs_review, reason = check_mode_consistency(req.query, req.mode)
     if needs_review:
@@ -179,7 +189,7 @@ def process_query(req: QueryRequest, request: Request):
 
     if result.status == "ESCALATED":
         return _escalate(req.query, req.mode, result.reason or "insufficient evidence",
-                         risk_level=result.risk_level or "low", ip=ip)
+                         risk_level=result.risk_level or "low", ip=ip, answer=result.answer)
 
     audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip, status="SUCCESS")
     return ChatbotResponse(mode=req.mode, answer=result.answer, citations=result.citations,
@@ -324,18 +334,6 @@ def view_document(filename: str):
     audit_log.log("DOCUMENT_VIEWED", f"filename={safe_filename}", resource=f"document:{safe_filename}")
     return FileResponse(path=file_path, media_type=media_type,
                         headers={"Content-Disposition": f'inline; filename="{safe_filename}"'})
-
-
-@app.get("/documents/{filename}/download", dependencies=[Depends(require_admin_key)])
-def download_document(filename: str):
-    safe_filename = os.path.basename(filename)
-    file_path = (UPLOAD_DIR / safe_filename).resolve()
-    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
-        raise HTTPException(status_code=403, detail="Access denied.")
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Document not found.")
-    return FileResponse(path=file_path, filename=safe_filename,
-                        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'})
 
 
 @app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])

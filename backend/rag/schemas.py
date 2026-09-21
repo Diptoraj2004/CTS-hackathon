@@ -61,9 +61,10 @@ class RAGResponse(BaseModel):
     confidence: float = 0.0
     confidence_bucket: Literal["low", "medium", "high"] = "low"
     reason: Optional[str] = None    # why it was escalated, if it was
-    risk_level: Optional[Literal["low", "high"]] = None  # "high" = mode-consistency/
-    # safety escalation (PRD's Edge Case #1); "low" = evidence-quality escalation
-    # (weak match, missing citations, etc.) — read this, not reason's wording.
+    risk_level: Optional[Literal["none", "low", "high"]] = None  # "high" = mode-consistency/
+    # safety escalation; "low" = evidence-quality escalation (weak match, missing
+    # citations); "none" = the question isn't drug-related at all — not a safety
+    # matter, doesn't belong in the human review queue.
 
 
 if __name__ == "__main__":

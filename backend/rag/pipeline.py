@@ -11,7 +11,7 @@ from backend.rag import config
 from backend.rag.citation import process as process_citations
 from backend.rag.confidence import bucket_for, calibrated_score
 from backend.rag.generator import NOT_IN_CONTEXT, generate
-from backend.rag.query_understanding import remember_answer, understand
+from backend.rag.query_understanding import find_repeat_answer, remember_answer, understand
 from backend.rag.relevance_gate import check
 from backend.rag.retriever import retrieve
 from backend.rag.schemas import Mode, RAGResponse
@@ -26,17 +26,50 @@ FALLBACK = {
                "pharmacist.",
 }
 
+# Distinct from FALLBACK: this is for questions that aren't about the drug
+# documentation at all ("what's the weather"), not ones where a real drug
+# question just lacks strong evidence. Sending someone to "ask your doctor"
+# about the weather is nonsensical -- mentor feedback item #4.
+OUT_OF_SCOPE = {
+    "clinician": "This doesn't appear to be a question about the ingested drug documentation. "
+                 "I can only answer questions grounded in the uploaded labels.",
+    "patient": "That doesn't look like a question about a medication. I can only help with "
+               "questions about the drugs in the uploaded documents.",
+}
+
+INJECTION_QUERY_MESSAGE = ("This query appears to contain an embedded instruction rather than a "
+                          "genuine question, which violates usage policy — it wasn't processed.")
+INJECTION_CORPUS_MESSAGE = ("A source document contains an embedded instruction rather than genuine "
+                            "content, which violates usage policy — it was blocked before reaching "
+                            "the model.")
+
 
 def _escalate(mode: Mode, reason: str, confidence: float, session_id: str,
               risk_level: str = "low") -> RAGResponse:
-    remember_answer(session_id, FALLBACK[mode])
-    return RAGResponse(mode=mode, answer=FALLBACK[mode], status="ESCALATED",
+    message = OUT_OF_SCOPE[mode] if risk_level == "none" else FALLBACK[mode]
+    remember_answer(session_id, message)
+    return RAGResponse(mode=mode, answer=message, status="ESCALATED",
                        confidence=round(calibrated_score(confidence), 2),
                        confidence_bucket=bucket_for(confidence), reason=reason,
                        risk_level=risk_level)
 
 
 def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str | None = None) -> RAGResponse:
+    # Mentor item #1 / latency: a near-exact repeat of the last question
+    # doesn't need a fresh vectorDB round-trip or a new LLM call — chat
+    # memory already has the answer. See find_repeat_answer()'s docstring
+    # for exactly how narrow this check is (intentionally narrow).
+    cached = find_repeat_answer(session_id, query)
+    if cached is not None and cached not in FALLBACK.values() and cached not in OUT_OF_SCOPE.values():
+        remember_answer(session_id, cached)
+        return RAGResponse(mode=mode, answer=cached, status="APPROVED",
+                           confidence=1.0, confidence_bucket="high")
+        # Known limitation: citations from the original answer aren't
+        # replayed here (chat memory stores answer text, not the citation
+        # list) — a repeated question shows the same answer without its
+        # source links. Flag if that's worth fixing; it means caching the
+        # structured response per session, not just the text.
+
     info = understand(query, mode=mode, session_id=session_id, drug_hint=drug_hint)
     retrieved = retrieve(info.standalone_query, info.drug_names, sections=info.section_hints)
 
@@ -45,11 +78,19 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         # safety-relevant hit (indirect prompt injection via the corpus),
         # so it's high risk in the same sense a mode-mismatch is, not a
         # plain evidence-quality issue.
-        return _escalate(mode, "A source document failed a safety check.", 0.0, session_id, risk_level="high")
+        return _escalate(mode, INJECTION_CORPUS_MESSAGE, 0.0, session_id, risk_level="high")
 
     gate = check(info, retrieved)
     if not gate.passed:
-        return _escalate(mode, gate.reason, gate.top_score, session_id)
+        # No drug identified at all + nothing matched -> treat as off-topic,
+        # not "evidence too weak for a real drug question." See OUT_OF_SCOPE
+        # above for why these get a different message and confidence.risk_level.
+        off_topic = not info.drug_names and (
+            not retrieved or gate.reason.startswith("Weak evidence: no drug identified")
+            or gate.reason == "No documents matched the question"
+        )
+        return _escalate(mode, gate.reason, gate.top_score, session_id,
+                         risk_level="none" if off_topic else "low")
 
     gen = generate(info, gate.evidence)
     if NOT_IN_CONTEXT in gen.text:

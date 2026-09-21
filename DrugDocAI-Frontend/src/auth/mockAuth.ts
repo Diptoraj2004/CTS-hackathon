@@ -61,16 +61,6 @@ export const mockAuth = {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data.user));
       return { success: true, user: data.user };
     }
-
-    const user: User = {
-      id: role === "admin" ? "adm_" + Math.random().toString(36).substring(2, 9) : "usr_" + Math.random().toString(36).substring(2, 9),
-      email: identifier.includes("@") ? identifier : `${identifier}@drugdoc.ai`,
-      name: identifier.split("@")[0],
-      role: role === "admin" ? "admin" : "user",
-    };
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-    return { success: true, user };
   },
 
   register: async (

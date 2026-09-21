@@ -224,6 +224,33 @@ def remember_answer(session_id: str, answer: str) -> None:
     _save_history(session_id, history)
 
 
+def find_repeat_answer(session_id: str, query: str) -> str | None:
+    """Mentor-requested check: does this question actually need a fresh
+    vectorDB retrieval, or is chat memory enough? Scoped conservatively to
+    a near-exact repeat of the immediately preceding question (a UI
+    double-submit, a "sorry, say that again?") rather than a general
+    "can memory answer this" classifier -- a real classifier needs its own
+    LLM call, which would ADD latency, not cut it. This is a cheap,
+    reliable win for the narrow case it covers; it does not try to detect
+    every question chat history could in principle answer.
+
+    Caller is responsible for not treating a fallback/escalation message as
+    a cached APPROVED answer -- this function only returns raw text, it
+    doesn't know which FALLBACK strings pipeline.py uses.
+    """
+    history = get_history(session_id)
+    messages = history.messages
+    if len(messages) < 2:
+        return None
+    prev_ai, prev_human = messages[-1], messages[-2]
+    if not (isinstance(prev_ai, AIMessage) and isinstance(prev_human, HumanMessage)):
+        return None
+    normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
+    if normalize(prev_human.content) != normalize(query):
+        return None
+    return prev_ai.content
+
+
 if __name__ == "__main__":
     from backend.rag.retriever import retrieve
 
