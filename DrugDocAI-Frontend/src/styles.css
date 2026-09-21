@@ -3877,6 +3877,25 @@ a {
   text-overflow: ellipsis;
 }
 
+.admin-notif-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 14px;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+@keyframes notif-spin {
+  to { transform: rotate(360deg); }
+}
+
+.admin-notif-spinner {
+  animation: notif-spin 0.8s linear infinite;
+}
+
 .admin-notif-footer {
   border-top: 1px solid #f3f4f6;
   padding: 8px 12px;

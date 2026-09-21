@@ -82,5 +82,33 @@
             "source_type": "xml",
             "source_identifier": "fb85bc2e_bf001b70-6165-1ec9-e053-2a95a90a1274.xml"
         }
+    },
+    "ac-fast": {
+        "1": {
+            "document_id": "bf001b70-6165-1ec9-e053-2a95a90a1274",
+            "set_id": "bf001b70-6164-1ec9-e053-2a95a90a1274",
+            "drug_name": "ac-fast",
+            "active_ingredient": "unknown",
+            "label_version": "1",
+            "effective_date": "20210402",
+            "ingestion_timestamp": "2026-09-21T06:10:11.404108",
+            "source_file": "635022e7_bf001b70-6165-1ec9-e053-2a95a90a1274.xml",
+            "source_type": "xml",
+            "source_identifier": "635022e7_bf001b70-6165-1ec9-e053-2a95a90a1274.xml"
+        }
+    },
+    "antiseptics": {
+        "10": {
+            "document_id": "fd9dd0ed-a7e0-44c8-9c21-4b03b32f8cad",
+            "set_id": "7d1950b4-3237-4512-bab3-4c7364bdd618",
+            "drug_name": "antiseptics",
+            "active_ingredient": "unknown",
+            "label_version": "10",
+            "effective_date": "20100607",
+            "ingestion_timestamp": "2026-09-21T06:23:33.613048",
+            "source_file": "6762b62e_fd9dd0ed-a7e0-44c8-9c21-4b03b32f8cad.xml",
+            "source_type": "xml",
+            "source_identifier": "6762b62e_fd9dd0ed-a7e0-44c8-9c21-4b03b32f8cad.xml"
+        }
     }
 }
