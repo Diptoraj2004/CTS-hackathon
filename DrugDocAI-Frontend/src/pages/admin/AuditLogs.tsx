@@ -166,6 +166,11 @@ export const AuditLogs: React.FC = () => {
   const [logs, setLogs] = useState<AuditLogRecord[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [integrityStatus, setIntegrityStatus] = useState<{
+    valid: boolean;
+    message: string;
+  } | null>(null);
+  const [verifyingIntegrity, setVerifyingIntegrity] = useState(false);
 
   // ── Filter States ──
   const [dateRange, setDateRange] = useState<string>("");
@@ -197,6 +202,33 @@ export const AuditLogs: React.FC = () => {
       setError(err.message || "An error occurred while fetching audit logs.");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const verifyIntegrity = useCallback(async () => {
+    setVerifyingIntegrity(true);
+    setIntegrityStatus(null);
+
+    try {
+      const res = await adminFetch(`${API_BASE}/audit/verify`);
+
+      if (!res.ok) {
+        throw new Error(`Integrity verification failed (HTTP ${res.status})`);
+      }
+
+      const data = await res.json();
+
+      setIntegrityStatus({
+        valid: data.valid,
+        message: data.message,
+      });
+    } catch (err: any) {
+      setIntegrityStatus({
+        valid: false,
+        message: err.message || "Integrity verification failed.",
+      });
+    } finally {
+      setVerifyingIntegrity(false);
     }
   }, []);
 
@@ -275,16 +307,55 @@ export const AuditLogs: React.FC = () => {
 
   return (
     <AdminLayout title="Audit Logs">
-      {/* ── Page Header Action Button ── */}
-      <div className="al-page-header">
-        <div>
-          <p className="al-subtitle">Track all system activities, document processing events, and user actions.</p>
-        </div>
-        <button type="button" className="al-export-btn" title="Export Audit Logs" onClick={fetchLogs}>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button
+          type="button"
+          className="al-export-btn"
+          title="Verify Audit Log Integrity"
+          onClick={verifyIntegrity}
+          disabled={verifyingIntegrity}
+        >
+          {verifyingIntegrity ? <Loader2 size={15} className="spin" /> : <ShieldCheck size={15} />}
+          {verifyingIntegrity ? "Verifying..." : "Verify Integrity"}
+        </button>
+
+        <button
+          type="button"
+          className="al-export-btn"
+          title="Refresh Audit Logs"
+          onClick={fetchLogs}
+        >
           <RefreshCw size={15} />
           Refresh Logs
         </button>
       </div>
+
+      {integrityStatus && (
+        <div
+          className="admin-card"
+          style={{
+            marginBottom: "16px",
+            padding: "12px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: "10px",
+          }}
+        >
+          {integrityStatus.valid ? (
+            <CheckCircle2 size={18} />
+          ) : (
+            <AlertTriangle size={18} />
+          )}
+
+          <span>
+            <strong>
+              {integrityStatus.valid ? "Audit integrity verified" : "Integrity check failed"}
+            </strong>
+            {" — "}
+            {integrityStatus.message}
+          </span>
+        </div>
+      )}
 
       {/* ── Filter Bar ── */}
       <div className="admin-card al-filter-card">
