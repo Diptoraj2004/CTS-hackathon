@@ -6,7 +6,6 @@ import { Login } from "./pages/Login";
 import { AskQuestion } from "./pages/AskQuestion";
 import { SourcesEvidence } from "./pages/SourcesEvidence";
 import { MedicationInfo } from "./pages/MedicationInfo";
-import { ResultsPlaceholder } from "./pages/ResultsPlaceholder";
 import { ProfilePlaceholder } from "./pages/ProfilePlaceholder";
 import { RequireAdmin } from "./auth/RequireAdmin";
 import { AdminDashboard } from "./pages/admin/AdminDashboard";
@@ -26,7 +25,7 @@ function App() {
       <Route path="/results" element={<AskQuestion />} />
       <Route path="/sources" element={<SourcesEvidence />} />
       <Route path="/medication-info" element={<MedicationInfo />} />
-      <Route path="/docs" element={<ResultsPlaceholder />} />
+      <Route path="/docs" element={<SourcesEvidence />} />
       <Route path="/profile" element={<ProfilePlaceholder />} />
 
       {/* ── Admin flow — every route requires a validated admin key ── */}

@@ -407,7 +407,7 @@ def download_document(filename: str, request: Request):
         },
     )
     
-@app.get("/documents/{filename}/view")
+@app.get("/documents/{filename}/view", dependencies=[Depends(require_admin_key)])
 def view_document(filename: str):
     safe_filename = os.path.basename(filename)
     file_path = (UPLOAD_DIR / safe_filename).resolve()
@@ -514,7 +514,7 @@ def resolve_review(request_id: str, body: ReviewResolution):
         raise HTTPException(status_code=404, detail="unknown request id")
 
 
-@app.get("/audit/verify")
+@app.get("/audit/verify", dependencies=[Depends(require_admin_key)])
 def verify_audit(request: Request):
     ok, msg = audit_log.verify()
     audit_log.log(
