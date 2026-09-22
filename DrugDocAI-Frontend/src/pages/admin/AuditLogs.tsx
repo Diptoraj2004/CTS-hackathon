@@ -316,16 +316,18 @@ export const AuditLogs: React.FC = () => {
   const availableStatuses: AuditStatus[] = ["Success", "Warning", "Error"];
 
   const filteredLogs = useMemo(() => {
-    const query = dateRange.trim().toLowerCase();
-
     return logs.filter((log) => {
       if (userFilter !== "all" && log.user !== userFilter) return false;
       if (actionFilter !== "all" && log.action !== actionFilter) return false;
       if (resourceFilter !== "all" && log.resource !== resourceFilter) return false;
       if (statusFilter !== "all" && log.status !== statusFilter) return false;
 
-      if (query && !log.timestamp.toLowerCase().includes(query)) {
-        return false;
+      if (dateRange) {
+        const logDate = new Date(log.timestamp).toISOString().slice(0, 10);
+
+        if (logDate !== dateRange) {
+          return false;
+        }
       }
 
       return true;
@@ -453,11 +455,11 @@ export const AuditLogs: React.FC = () => {
             <div className="al-date-input-wrap">
               <Calendar size={15} className="al-date-icon" />
               <input
-                type="text"
+                type="date"
                 className="al-date-input"
                 value={dateRange}
-                onChange={(event) => setDateRange(event.target.value)}
-                placeholder="Search date..."
+                onChange={(event) => { setDateRange(event.target.value); setCurrentPage(1); }}
+                aria-label="Filter by date"
               />
             </div>
           </div>
