@@ -1,6 +1,6 @@
 import pytest
 from backend.app.ingestion.chunker import Chunker
-from backend.app.models import ParsedDocument, Page, DocumentMetadata, Section
+from backend.app.models import ParsedDocument, Page, PageBlock, DocumentMetadata, Section
 
 def test_chunker_basic():
     chunker = Chunker(chunk_size=50, chunk_overlap=10)
@@ -63,3 +63,27 @@ def test_split_text_bounds_a_single_long_sentence():
 
 def test_split_text_ignores_blank_input():
     assert Chunker(chunk_size=20)._split_text(" \n\n ") == []
+
+
+def test_table_block_is_atomic_and_keeps_section_header():
+    meta = DocumentMetadata(
+        document_id="d3", drug_name="metformin", ingestion_timestamp="2026",
+        source_file="label.pdf", source_type="pdf",
+    )
+    table = "Adverse reaction | Metformin | Placebo\nDiarrhea | 53% | 12%\nNausea | 26% | 8%"
+    doc = ParsedDocument(
+        metadata=meta,
+        pages=[Page(
+            page_number=2,
+            text=table,
+            section="Adverse Reactions",
+            blocks=[PageBlock(kind="table", text=table)],
+        )],
+        sections=[],
+    )
+
+    chunks = Chunker(chunk_size=20, chunk_overlap=5).chunk_document(doc)
+
+    assert len(chunks) == 1
+    assert chunks[0].text.startswith("Section: Adverse Reactions")
+    assert "Diarrhea | 53% | 12%" in chunks[0].text

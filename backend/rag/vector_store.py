@@ -2,6 +2,7 @@
 Ported from Soumya's Chroma version — same public functions (get_embedder,
 embed, add_chunks) so nothing calling this module needs to change."""
 import threading
+import re
 from functools import lru_cache
 
 import lancedb
@@ -16,7 +17,14 @@ from backend.rag.schemas import Chunk
 # depending on LanceDB version. One lock around the whole read-decide-write
 # sequence removes the race entirely (bounded, low-contention: ingestion
 # already runs on a small thread pool, not one thread per request).
-_table_lock = threading.Lock()
+_table_lock = threading.RLock()
+_fts_ready = False
+_RRF_K = 60
+_STAT_QUERY = re.compile(
+    r"(?:%|percent|percentage|common|frequency|frequenc(?:y|ies)|incidence|rate|"
+    r"how often|how many|patients?)",
+    re.IGNORECASE,
+)
 
 
 @lru_cache(maxsize=1)
@@ -96,6 +104,95 @@ def _row(chunk: Chunk, vector: list[float]) -> dict:
     return row
 
 
+def _ensure_fts_index(table, force: bool = False) -> None:
+    """Create the persistent Tantivy/BM25 index once for the text column."""
+    global _fts_ready
+    if _fts_ready and not force:
+        return
+    with _table_lock:
+        if _fts_ready and not force:
+            return
+        try:
+            table.create_fts_index("text", replace=True)
+            _fts_ready = True
+        except (AttributeError, RuntimeError, ValueError) as exc:
+            # Vector retrieval remains available if a deployment lacks the
+            # optional LanceDB FTS/Tantivy support.
+            print(f"[vector_store] FTS index unavailable: {exc}")
+
+
+def _where_drugs(search, drug_names: list[str] | None):
+    if drug_names:
+        names = ", ".join(f"'{name.lower().replace(chr(39), chr(39) * 2)}'" for name in drug_names)
+        return search.where(f"drug_name IN ({names})")
+    return search
+
+
+def hybrid_search(query: str, drug_names: list[str] | None = None,
+                  limit: int = config.TOP_K) -> list[dict]:
+    """Run vector and BM25 searches, then fuse their ranks with RRF.
+
+    The returned rows retain ``_distance`` for the existing cosine-based
+    relevance gate and add only private ranking metadata for the retriever.
+    """
+    table = get_table()
+    if table is None or table.count_rows() == 0:
+        return []
+
+    candidate_limit = min(max(limit * 3, 10), table.count_rows())
+    vector_rows = _where_drugs(
+        table.search(embed([query])[0]).metric("cosine"), drug_names
+    ).limit(candidate_limit).to_list()
+
+    fts_rows = []
+    _ensure_fts_index(table)
+    try:
+        fts_rows = _where_drugs(
+            table.search(query, query_type="fts"), drug_names
+        ).limit(candidate_limit).to_list()
+    except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"[vector_store] FTS search unavailable; using vector results: {exc}")
+
+    fts_weight = 0.72 if _STAT_QUERY.search(query) else 0.5
+    vector_weight = 1.0 - fts_weight
+    merged: dict[str, dict] = {}
+    scores: dict[str, float] = {}
+    vector_scores: dict[str, float] = {}
+
+    for rank, row in enumerate(vector_rows, start=1):
+        chunk_id = row.get("chunk_id")
+        if not chunk_id:
+            continue
+        merged[chunk_id] = dict(row)
+        vector_scores[chunk_id] = max(0.0, min(1.0, 1 - row.get("_distance", 1)))
+        scores[chunk_id] = scores.get(chunk_id, 0.0) + vector_weight / (_RRF_K + rank)
+
+    for rank, row in enumerate(fts_rows, start=1):
+        chunk_id = row.get("chunk_id")
+        if not chunk_id:
+            continue
+        if chunk_id not in merged:
+            merged[chunk_id] = dict(row)
+        scores[chunk_id] = scores.get(chunk_id, 0.0) + fts_weight / (_RRF_K + rank)
+        merged[chunk_id]["_fts_rank"] = rank
+
+    ranked = []
+    for chunk_id, row in merged.items():
+        vector_score = vector_scores.get(chunk_id, 0.0)
+        fts_rank = row.get("_fts_rank")
+        # An exact BM25 hit is evidence even when it falls outside the
+        # semantic candidate set; preserve a gate-compatible score for it.
+        retrieval_score = vector_score if vector_score else (
+            max(config.MIN_RELEVANCE, 1.0 - 0.05 * (fts_rank - 1))
+            if fts_rank else 0.0
+        )
+        row["_retrieval_score"] = round(retrieval_score, 3)
+        row["_hybrid_score"] = scores[chunk_id]
+        ranked.append(row)
+    ranked.sort(key=lambda row: row["_hybrid_score"], reverse=True)
+    return ranked[:limit]
+
+
 def add_chunks(chunks: list[Chunk]) -> None:
     """Insert or update chunks (safe to run more than once — re-adding a
     chunk_id that already exists replaces it rather than duplicating it)."""
@@ -129,8 +226,10 @@ def add_chunks(chunks: list[Chunk]) -> None:
                 ids = ", ".join(f"'{c.chunk_id}'" for c in chunks)
                 table.delete(f"chunk_id IN ({ids})")
                 table.add(rows)
+            _ensure_fts_index(table, force=True)
         else:
-            db.create_table(config.COLLECTION_NAME, data=rows)
+            table = db.create_table(config.COLLECTION_NAME, data=rows)
+            _ensure_fts_index(table, force=True)
 
 
 def delete_by_source_file(source_file: str) -> int:

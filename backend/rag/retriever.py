@@ -5,7 +5,7 @@ from typing import Optional
 
 from backend.rag import config
 from backend.rag.schemas import Chunk, RetrievedChunk
-from backend.rag.vector_store import embed, get_table
+from backend.rag.vector_store import get_table, hybrid_search
 
 SECTION_BOOST = 0.15  # ranking bonus only; the stored score stays the raw similarity
 _STOPWORDS = {"and", "or", "of", "the", "for", "to", "in", "with", "use"}
@@ -33,20 +33,15 @@ def retrieve(query: str, drug_names: Optional[list[str]] = None,
     if table is None or table.count_rows() == 0:
         return []
 
-    n = min(max(top_k * 3, 10), table.count_rows()) if sections else min(top_k, table.count_rows())
-
-    search = table.search(embed([query])[0]).metric("cosine")
-    if drug_names:
-        names = ", ".join(f"'{d.lower()}'" for d in drug_names)
-        search = search.where(f"drug_name IN ({names})")
-
-    rows = search.limit(n).to_list()
+    n = min(max(top_k * 3, 10), table.count_rows()) if sections else top_k
+    rows = hybrid_search(query, drug_names=drug_names, limit=n)
 
     results = []
     for row in rows:
-        # cosine metric's _distance is 1 - cosine_similarity, so flip it back
-        score = max(0.0, min(1.0, 1 - row["_distance"]))
-        fields = {k: v for k, v in row.items() if k not in ("vector", "_distance")}
+        score = row.get("_retrieval_score", 0.0)
+        fields = {k: v for k, v in row.items()
+              if k not in ("vector", "_distance", "_score", "_hybrid_score",
+                       "_retrieval_score", "_fts_rank")}
         results.append(RetrievedChunk(chunk=Chunk(**fields), score=round(score, 3)))
 
     if sections:

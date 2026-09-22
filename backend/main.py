@@ -1,6 +1,7 @@
 """Core API. See pipeline.py, ingest_jobs.py, audit_log.py, review_queue.py,
 redaction.py, auth.py module docstrings for the reasoning behind each piece."""
 import os
+import json
 import secrets
 import urllib.parse
 import urllib.request
@@ -12,7 +13,8 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from backend.app.ingestion.export_to_rag_store import parse_and_chunk, store_chunks
+from backend.app.ingestion.export_to_rag_store import store_chunks
+from backend.app.ingestion.upload_dispatcher import SUPPORTED_SUFFIXES, parse_upload
 from backend.analytics import (history, recent_activity, record_processed,
                                 record_query, record_source_usage, record_upload)
 from backend.ingest_jobs import create_job, get_job, update_job
@@ -20,6 +22,7 @@ from backend.paths import DATA_DIR
 from backend.rag import query_understanding
 from backend.rag.context_summarizer import summarize_session
 from backend.rag.drug_aliases import normalize_drug_name
+from backend.rag.drug_profile import build_profile
 from backend.rag.generator import GenerationError
 from backend.rag.pipeline import answer as rag_answer
 from backend.rag.vector_store import (delete_by_source_file, distinct_values,
@@ -33,14 +36,31 @@ from backend.safety.auth_store import (authenticate, consume_oauth_state,
 from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
-from backend.rag.schemas import ContextStatus, SessionRollover
-from backend.safety.schemas import (ChatbotResponse, LoginRequest, QueryRequest,
+from backend.rag.schemas import ContextStatus, DrugProfile, SessionRollover
+from backend.safety.schemas import (ChatbotResponse, DrugProfileRequest, LoginRequest, QueryRequest,
                                     RegisterRequest, ReviewResolution)
 
 app = FastAPI(title="DrugDocQA Core API", version="0.8")
 
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def prompt_injection_middleware(request: Request, call_next):
+    """Reject direct prompt injection before query handlers can retrieve or generate."""
+    if request.method == "POST" and request.url.path in {"/query", "/api/drug-profile"}:
+        try:
+            payload = json.loads(await request.body())
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = {}
+        candidate = ""
+        if isinstance(payload, dict):
+            candidate = payload.get("query") or payload.get("drug") or ""
+        if isinstance(candidate, str) and injection_guard.looks_like_injection(candidate):
+            audit_log.log("INJECTION_BLOCKED", candidate[:200], ip=_client_ip(request), status="BLOCKED")
+            return JSONResponse(status_code=400, content={"detail": injection_guard.INJECTION_ERROR})
+    return await call_next(request)
 
 
 @app.exception_handler(RequestValidationError)
@@ -249,12 +269,29 @@ def process_query(req: QueryRequest, request: Request):
                            request_id=None)
 
 
+@app.post("/api/drug-profile", response_model=DrugProfile)
+def drug_profile(body: DrugProfileRequest, request: Request):
+    if injection_guard.looks_like_injection(body.drug):
+        audit_log.log("INJECTION_BLOCKED", body.drug[:200], ip=_client_ip(request), status="BLOCKED")
+        raise HTTPException(status_code=400, detail=injection_guard.INJECTION_ERROR)
+    try:
+        return build_profile(body.drug)
+    except ValueError as exc:
+        audit_log.log("INJECTION_BLOCKED", body.drug[:200], ip=_client_ip(request), status="BLOCKED")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except GenerationError as exc:
+        audit_log.log("PROFILE_GENERATION_FAILED", body.drug[:200], ip=_client_ip(request), status="FAILED")
+        raise HTTPException(status_code=503, detail="The structured profile generator is unavailable right now.") from exc
+
+
 def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str | None,
                    original_filename: str) -> None:
     try:
         update_job(job_id, stage="PARSING", detail="Parsing and chunking the document.")
-        chunks = parse_and_chunk(str(stored_path), doc_id=doc_id, drug_name=drug_name,
-                                 original_filename=original_filename)
+        chunks = parse_upload(str(stored_path), doc_id=doc_id, drug_name=drug_name,
+                      original_filename=original_filename)
         update_job(job_id, chunks_found=len(chunks))
 
         if len(chunks) == 0:
@@ -308,6 +345,9 @@ async def ingest_document(file: UploadFile, drug_name: str, request: Request, do
         raise HTTPException(status_code=413, detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024*1024)} MB limit.")
 
     safe_filename = os.path.basename(file.filename or "upload")
+    suffix = Path(safe_filename).suffix.lower()
+    if suffix != ".zip" and suffix not in SUPPORTED_SUFFIXES:
+        raise HTTPException(status_code=415, detail="Unsupported upload type.")
     clean_drug_name = normalize_drug_name(drug_name)
 
     job = create_job(filename=file.filename, drug_name=clean_drug_name, doc_id=doc_id)

@@ -22,6 +22,13 @@ Rules:
 - Give a complete answer: use every excerpt that is relevant to the question.
 - EVERY sentence and EVERY bullet point that states a fact must include its excerpt number in square brackets, placed right BEFORE the final full stop. Example: "The maximum dose is 2550 mg per day [2]."
 - Copy numbers (doses, ages, lab values) exactly as written in the excerpts.
+- For frequency, prevalence, percentage, incidence, or "how common/how often" questions, extract the
+    exact statistic from the excerpts. Preserve the number, unit, denominator, population, timeframe,
+    and qualifiers; do not replace a reported rate with words such as "common" or "rare".
+- Do not calculate, combine, or infer a rate. If the excerpts provide multiple rates, keep each rate
+    tied to its population, dose, timeframe, or study description and state when they cannot be compared.
+- Prefer direct reported statistics over general adverse-effect descriptions, and cite the excerpt
+    containing each statistic.
 - If the excerpts do not contain the answer, reply with exactly: {NOT_IN_CONTEXT}
 - Never invent doses, numbers, units, or drug names.
 - Do not diagnose anyone or tell them to change their treatment."""

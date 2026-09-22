@@ -1,7 +1,7 @@
 import uuid
 import re
 from typing import List
-from backend.app.models import ParsedDocument, Chunk, Section
+from backend.app.models import ParsedDocument, Chunk, Section, Page, PageBlock
 from backend.app.config import Config
 
 class Chunker:
@@ -51,6 +51,24 @@ class Chunker:
         flush()
         return chunks
 
+    def _page_units(self, page: Page) -> List[str]:
+        """Return semantic units; tables and lists are never split."""
+        if not page.blocks:
+            return self._split_text(page.text)
+
+        units: List[str] = []
+        for block in page.blocks:
+            if not block.text.strip():
+                continue
+            if block.kind == "table":
+                heading = page.section if page.section and page.section != "General" else ""
+                units.append(f"Section: {heading}\n{block.text}" if heading else block.text)
+            elif block.kind == "list":
+                units.append(re.sub(r"\s+", " ", block.text).strip())
+            else:
+                units.extend(self._split_text(block.text))
+        return units
+
     def chunk_document(self, doc: ParsedDocument) -> List[Chunk]:
         chunks = []
         meta = doc.metadata
@@ -81,7 +99,7 @@ class Chunker:
                     ))
         else:
             for page in doc.pages:
-                text_chunks = self._split_text(page.text)
+                text_chunks = self._page_units(page)
                 for i, text in enumerate(text_chunks):
                     if not text: continue
                     chunks.append(Chunk(

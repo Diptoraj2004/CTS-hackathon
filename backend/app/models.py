@@ -1,6 +1,6 @@
 import os
 from pydantic import BaseModel, Field
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, Literal
 
 class DocumentMetadata(BaseModel):
     document_id: str
@@ -20,12 +20,20 @@ class Section(BaseModel):
     text: str
     subsections: List['Section'] = Field(default_factory=list)
 
+
+class PageBlock(BaseModel):
+    """Ordered content unit emitted by layout-aware PDF extraction."""
+    kind: Literal["text", "table", "list"] = "text"
+    text: str
+
+
 class Page(BaseModel):
     page_number: int
     text: str
     extraction_method: str = "pdf_text"
     section: str = "General"
     subsection: Optional[str] = None
+    blocks: List[PageBlock] = Field(default_factory=list)
 
 class ParsedDocument(BaseModel):
     metadata: DocumentMetadata

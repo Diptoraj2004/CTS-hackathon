@@ -16,6 +16,10 @@ class QueryRequest(BaseModel):
     # query_understanding.understand()'s drug_hint parameter.
 
 
+class DrugProfileRequest(BaseModel):
+    drug: str = Field(..., min_length=2, max_length=100)
+
+
 class RegisterRequest(BaseModel):
     email: str = Field(..., min_length=3)
     name: str = Field(..., min_length=1)

@@ -87,6 +87,24 @@ class RAGResponse(BaseModel):
     # matter, doesn't belong in the human review queue.
 
 
+class DrugProfile(BaseModel):
+    """Strict, evidence-grounded drug profile returned by the profile API."""
+    model_config = {"extra": "forbid"}
+
+    drug: str
+    class_: str = Field(alias="class")
+    uses: list[str] = Field(default_factory=list)
+    forms: list[str] = Field(default_factory=list)
+    dosage: list[str] = Field(default_factory=list)
+    sideEffects: list[str] = Field(default_factory=list)
+    interactions: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+    def model_dump(self, **kwargs):
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(**kwargs)
+
+
 if __name__ == "__main__":
     demo = RAGResponse(
         mode="patient",

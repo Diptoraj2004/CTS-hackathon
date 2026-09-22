@@ -2,6 +2,7 @@ import os
 from backend.app.models import ParsedDocument
 from backend.app.ingestion.pdf_parser import PDFParser
 from backend.app.ingestion.xml_parser import XMLParser
+from backend.app.ingestion.multimodal_parser import ImageParser, AudioParser
 
 class ParserFactory:
     @staticmethod
@@ -15,6 +16,12 @@ class ParserFactory:
             doc = parser.parse(file_path, doc_id, drug_name)
         elif ext == '.xml':
             parser = XMLParser()
+            doc = parser.parse(file_path, doc_id, drug_name)
+        elif ext in {'.png', '.jpg', '.jpeg'}:
+            parser = ImageParser()
+            doc = parser.parse(file_path, doc_id, drug_name)
+        elif ext in {'.mp3', '.wav', '.m4a', '.ogg'}:
+            parser = AudioParser()
             doc = parser.parse(file_path, doc_id, drug_name)
         else:
             raise ValueError(f"Unsupported file extension: {ext}")

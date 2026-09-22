@@ -13,7 +13,7 @@ RATE_LIMIT_DB_PATH = Path(os.getenv("RATE_LIMIT_DB_PATH", str(DATA_DIR / "rate_l
 
 class Config:
     CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", 500))
-    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 50))
+    CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", 100))
     EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
     # Bare "tesseract" resolves via PATH on Linux/Colab (after `apt-get install
     # tesseract-ocr`). The old hardcoded Windows path silently broke OCR on
