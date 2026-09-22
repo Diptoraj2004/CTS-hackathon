@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { AdminLayout } from "../../layouts/AdminLayout";
 import {
   FileText,
@@ -7,7 +8,6 @@ import {
   AlertTriangle,
   TrendingUp,
   TrendingDown,
-  MoreHorizontal,
   ArrowRight,
 } from "lucide-react";
 import { adminFetch } from "../../auth/adminApi";
@@ -245,6 +245,7 @@ const KpiCard: React.FC<KpiCardProps> = ({ icon, iconClass, value, label, delta,
 
 // ── Main Dashboard Page ───────────────────────────────────────────────────────
 export const AdminDashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [dashboardData, setDashboardData] = useState<DashboardData>({ source_distribution: [], recent_uploads: [], recent_activity: [], processing_activity: [] });
   const [statsError, setStatsError] = useState<string | null>(null);
@@ -364,7 +365,7 @@ export const AdminDashboard: React.FC = () => {
             <h2 className="admin-card-title">
               <FileText size={16} /> Recent Uploads
             </h2>
-            <button className="admin-view-all-btn" type="button">
+            <button className="admin-view-all-btn" type="button" onClick={() => navigate("/admin/library")}>
               View All <ArrowRight size={13} />
             </button>
           </div>
@@ -386,9 +387,6 @@ export const AdminDashboard: React.FC = () => {
                   <td><StatusBadge status={row.status} /></td>
                   <td className="admin-table-date">{(row.uploadedOn || row.ingestion_timestamp || "").replace("\n", " ")}</td>
                   <td>
-                    <button className="admin-action-dots" aria-label="Actions">
-                      <MoreHorizontal size={16} />
-                    </button>
                   </td>
                 </tr>
               ))}
@@ -402,7 +400,7 @@ export const AdminDashboard: React.FC = () => {
             <h2 className="admin-card-title">
               <FileText size={16} /> Recent Activity
             </h2>
-            <button className="admin-view-all-btn" type="button">
+            <button className="admin-view-all-btn" type="button" onClick={() => navigate("/admin/audit")}>
               View All <ArrowRight size={13} />
             </button>
           </div>

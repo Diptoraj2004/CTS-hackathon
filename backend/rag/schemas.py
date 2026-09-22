@@ -28,6 +28,9 @@ class Chunk(BaseModel):
     extraction_method: Optional[str] = None
     original_filename: Optional[str] = None  # clean display name, distinct from
     # source_file (which carries the job-id-prefix for on-disk collision-safety)
+    source: str = "label"
+    audience: str = "clinician"
+    source_url: Optional[str] = None
 
 
 class RetrievedChunk(BaseModel):
@@ -70,6 +73,8 @@ class Citation(BaseModel):
     doc: str
     section: str
     page: Optional[int] = None
+    source: str = "label"
+    url: Optional[str] = None
 
 
 class RAGResponse(BaseModel):

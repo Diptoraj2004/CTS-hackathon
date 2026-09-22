@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 
 from backend.rag.schemas import Citation, RetrievedChunk
 
-_MARKER = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")      # [1]  [1,3]  [1, 3]
-_TRAILING = re.compile(r"([.!?])[ \t]*((?:\[\d+(?:\s*,\s*\d+)*\][ \t]*)+)")  # "day. [1]"
+_MARKER = re.compile(r"\[(\d+(?:\s*,\s*\d+)*|FAERS)\]", re.IGNORECASE)
+_TRAILING = re.compile(r"([.!?])[ \t]*((?:(?:\[\d+(?:\s*,\s*\d+)*\]|\[FAERS\])[ \t]*)+)", re.IGNORECASE)
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
 _SKIP_PHRASES = ("talk to your doctor", "talk to your pharmacist", "doctor or pharmacist")
 _STOPWORDS = {"with", "that", "this", "from", "have", "should", "would", "could", "their",
@@ -82,7 +82,8 @@ def _factual_sentences(text: str) -> list[str]:
     return sentences
 
 
-def process(answer: str, evidence: list[RetrievedChunk], question: str = "") -> CitationResult:
+def process(answer: str, evidence: list[RetrievedChunk], question: str = "",
+            external_citation: Citation | None = None) -> CitationResult:
     old_to_new: dict[int, int] = {}
     citations: list[Citation] = []
     invalid: set[int] = set()
@@ -93,18 +94,26 @@ def process(answer: str, evidence: list[RetrievedChunk], question: str = "") -> 
             old_to_new[n] = len(old_to_new) + 1
             c = evidence[n - 1].chunk
             citations.append(Citation(chunk_id=c.chunk_id, doc=c.source_file,
-                                      section=c.section, page=c.page))
+                                      section=c.section, page=c.page,
+                                      source=c.source, url=c.source_url))
         return old_to_new[n]
 
+    external_marker = False
+
     def renumber(match: re.Match) -> str:
+        nonlocal external_marker
         kept = []
         for part in match.group(1).split(","):
+            if part.strip().upper() == "FAERS":
+                external_marker = True
+                continue
             n = int(part)
             if not 1 <= n <= len(evidence):
                 invalid.add(n)
                 continue
             kept.append(cite(n))
-        return "".join(f"[{k}]" for k in sorted(set(kept)))
+        markers = "".join(f"[{k}]" for k in sorted(set(kept)))
+        return f"{markers}[FAERS]" if external_marker else markers
 
     text = _MARKER.sub(renumber, _normalize(answer))
     text = re.sub(r"[ \t]+([.,;:])", r"\1", text)      # tidy space left by removed markers
@@ -134,7 +143,8 @@ def process(answer: str, evidence: list[RetrievedChunk], question: str = "") -> 
     new_to_chunk = {new: evidence[old - 1].chunk for old, new in old_to_new.items()}
     unsupported = []
     for s in _factual_sentences(text):
-        refs = [int(x) for group in _MARKER.findall(s) for x in group.split(",")]
+        refs = [int(x) for group in _MARKER.findall(s) for x in group.split(",")
+            if x.strip().isdigit()]
         if not refs:
             continue
         source = " ".join(new_to_chunk[k].text for k in refs if k in new_to_chunk)
@@ -151,6 +161,8 @@ def process(answer: str, evidence: list[RetrievedChunk], question: str = "") -> 
     uncited = [s for s in facts if not _MARKER.search(s)]
     coverage = 1.0 if not facts else round((len(facts) - len(uncited)) / len(facts), 2)
 
+    if external_citation is not None and (external_marker or external_citation.source == "faers"):
+        citations.append(external_citation)
     return CitationResult(text=text, citations=citations, invalid_refs=sorted(invalid),
                           coverage=coverage, uncited=uncited, auto_cited=auto,
                           unsupported_numbers=unsupported, ungrounded_topics=ungrounded)

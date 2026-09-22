@@ -3,8 +3,13 @@ from backend.app.models import ParsedDocument
 from backend.app.ingestion.pdf_parser import PDFParser
 from backend.app.ingestion.xml_parser import XMLParser
 from backend.app.ingestion.multimodal_parser import ImageParser, AudioParser
+from backend.app.ingestion.brand_source_parser import BrandSourceParser
 
 class ParserFactory:
+    @staticmethod
+    def parse_url(url: str, doc_id: str = None, drug_name: str = None) -> ParsedDocument:
+        return BrandSourceParser().parse(url, doc_id, drug_name or "Unknown Drug")
+
     @staticmethod
     def parse_document(file_path: str, doc_id: str = None, drug_name: str = None,
                        use_ocr: bool = True, original_filename: str = None) -> ParsedDocument:

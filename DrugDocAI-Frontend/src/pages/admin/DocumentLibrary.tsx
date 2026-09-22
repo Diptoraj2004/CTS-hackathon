@@ -80,7 +80,7 @@ const mapBackendRecord = (item: any, index: number, defaultDrug?: string): Docum
   const canonicalId = item.source_file || item.id || item.filename || item.file_name || item.chunk_id || `doc-${index}`;
   const fileName = getDisplayFileName(item, index);
   const drug = item.drug_name || defaultDrug || "General / Unspecified";
-  const source = item.source && item.source !== "unknown" ? item.source : "Uploaded";
+  const source = item.source_type && item.source_type !== "unknown" ? item.source_type : "Uploaded";
   
   const rawVersion = item.label_version || item.version;
   const version = rawVersion && rawVersion !== "unknown" ? rawVersion : "Not specified";
@@ -278,8 +278,8 @@ export const DocumentLibrary: React.FC = () => {
   // Derived filter options from fetched documents
   const docSources = useMemo(() => [...new Set(documents.map(d => d.source))].sort(), [documents]);
   const docDrugs = useMemo(() => [...new Set(documents.map(d => d.drug))].sort(), [documents]);
-  const docFileTypes: FileType[] = ["PDF", "XLSX", "DOCX"];
-  const docStatuses: DocStatus[] = ["Processed", "Processing", "Error"];
+  const docFileTypes: FileType[] = ["PDF", "XML", "XLSX", "DOCX"];
+  const docStatuses: DocStatus[] = ["Processed"];
 
   const hasFilters = search || filterSource || filterDrug || filterType || filterStatus;
 
@@ -323,8 +323,8 @@ export const DocumentLibrary: React.FC = () => {
 
   // Handle View Document action
   const handleViewDocument = async (doc: DocumentRecord) => {
-    if (doc.fileType !== "PDF") {
-      alert(`Inline preview is only supported for PDF documents. "${doc.fileName}" is a ${doc.fileType} file.`);
+    if (doc.fileType !== "PDF" && doc.fileType !== "XML") {
+      alert(`Inline preview is only supported for PDF and XML documents. "${doc.fileName}" is a ${doc.fileType} file.`);
       return;
     }
     

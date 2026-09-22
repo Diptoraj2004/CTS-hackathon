@@ -14,6 +14,9 @@ class DocumentMetadata(BaseModel):
     source_type: str
     source_identifier: Optional[str] = "unknown"
     original_filename: Optional[str] = None
+    source: str = "label"
+    audience: str = "clinician"
+    source_url: Optional[str] = None
 
 class Section(BaseModel):
     title: str
@@ -58,6 +61,9 @@ class Chunk(BaseModel):
     ingestion_timestamp: str
     extraction_method: str
     original_filename: Optional[str] = None
+    source: str = "label"
+    audience: str = "clinician"
+    source_url: Optional[str] = None
 
 class EmbeddingRecord(BaseModel):
     chunk: Chunk

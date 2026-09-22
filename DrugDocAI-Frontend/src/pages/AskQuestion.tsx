@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   Send,
-  Paperclip,
   User,
   Stethoscope,
   Pencil,
@@ -399,9 +398,6 @@ export const AskQuestion: React.FC = () => {
                     aria-label="Ask a question about this medication"
                   />
                   <div className="f03-input-actions">
-                    <button className="f03-attach-btn" aria-label="Attach file" type="button">
-                      <Paperclip size={17} />
-                    </button>
                     <button
                       className={`f03-send-btn ${inputValue.trim() ? "f03-send-btn--active" : ""}`}
                       onClick={handleSend}
@@ -759,9 +755,6 @@ export const AskQuestion: React.FC = () => {
                     aria-label="Ask a question about this medication"
                   />
                   <div className="f03-input-actions">
-                    <button className="f03-attach-btn" aria-label="Attach file" type="button">
-                      <Paperclip size={17} />
-                    </button>
                     <button
                       className={`f03-send-btn ${inputValue.trim() ? "f03-send-btn--active" : ""}`}
                       onClick={handleSend}
@@ -838,7 +831,7 @@ export const AskQuestion: React.FC = () => {
               <p className="f03-info-card-body">
                 This tool provides information from official medical sources and is not a substitute for professional medical advice.
               </p>
-              <button className="f03-info-link" type="button">
+                  <button className="f03-info-link" type="button" onClick={() => navigate("/docs")}>
                 Learn more <ArrowRight size={13} />
               </button>
             </div>
@@ -914,7 +907,7 @@ export const AskQuestion: React.FC = () => {
               <p className="f03-info-card-body">
                 This tool provides information from official medical sources and is not a substitute for professional medical advice.
               </p>
-              <button className="f03-info-link" type="button">
+              <button className="f03-info-link" type="button" onClick={() => navigate(`/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`)}>
                 Learn more <ArrowRight size={13} />
               </button>
             </div>

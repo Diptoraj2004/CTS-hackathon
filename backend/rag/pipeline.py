@@ -7,14 +7,18 @@ which did understand() and retrieve() again internally to generate the
 actual answer — the whole pipeline ran twice per query, roughly doubling
 latency on top of an already-slow LLM call. The scan is folded in here
 instead, so main.py just calls answer() once and gets everything."""
+from concurrent.futures import ThreadPoolExecutor
+
 from backend.rag import config
 from backend.rag.citation import process as process_citations
 from backend.rag.confidence import bucket_for, calibrated_score
 from backend.rag.generator import NOT_IN_CONTEXT, generate
+from backend.rag.api_tools import (fetch_faers_adverse_events,
+                                    format_faers_context, is_adverse_event_query)
 from backend.rag.query_understanding import find_repeat_answer, remember_answer, understand
 from backend.rag.relevance_gate import check
 from backend.rag.retriever import retrieve
-from backend.rag.schemas import Mode, RAGResponse
+from backend.rag.schemas import Citation, Mode, RAGResponse
 from backend.safety import injection_guard
 from backend.safety.redaction import RedactionUnavailable, redact
 
@@ -71,7 +75,13 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         # structured response per session, not just the text.
 
     info = understand(query, mode=mode, session_id=session_id, drug_hint=drug_hint)
-    retrieved = retrieve(info.standalone_query, info.drug_names, sections=info.section_hints)
+    faers_future = None
+    if is_adverse_event_query(query) and info.drug_names:
+        faers_future = ThreadPoolExecutor(max_workers=1).submit(
+            fetch_faers_adverse_events, info.drug_names[0]
+        )
+    retrieved = retrieve(info.standalone_query, info.drug_names,
+                         sections=info.section_hints, preferred_audience=mode)
 
     if any(injection_guard.looks_like_injection(r.chunk.text) for r in retrieved):
         # A source document hides an instruction for the model — this is a
@@ -92,7 +102,12 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         return _escalate(mode, gate.reason, gate.top_score, session_id,
                          risk_level="none" if off_topic else "low")
 
-    gen = generate(info, gate.evidence)
+    faers_context = None
+    faers_result = None
+    if faers_future is not None:
+        faers_result = faers_future.result()
+        faers_context = format_faers_context(faers_result)
+    gen = generate(info, gate.evidence, faers_context=faers_context)
     if NOT_IN_CONTEXT in gen.text:
         return _escalate(mode, "Answer not found in the retrieved label sections",
                          gate.top_score, session_id)
@@ -105,7 +120,17 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         return _escalate(mode, f"Redaction unavailable, answer withheld: {e}",
                          0.0, session_id, risk_level="high")
 
-    cit = process_citations(safe_text, gate.evidence, question=query)
+    faers_citation = None
+    if faers_result is not None:
+        faers_citation = Citation(
+            chunk_id=f"faers:{faers_result.drug}",
+            doc="openFDA FAERS",
+            section="Adverse event reports",
+            source="faers",
+            url=faers_result.url,
+        )
+    cit = process_citations(safe_text, gate.evidence, question=query,
+                            external_citation=faers_citation)
     confidence = calibrated_score((gate.top_score + cit.coverage) / 2)
 
     if cit.invalid_refs:

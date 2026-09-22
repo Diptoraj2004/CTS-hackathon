@@ -33,6 +33,9 @@ def _to_rag_chunk(chunk) -> RagChunk:
         ingestion_timestamp=chunk.ingestion_timestamp,
         extraction_method=chunk.extraction_method,
         original_filename=chunk.original_filename,
+        source=chunk.source,
+        audience=chunk.audience,
+        source_url=chunk.source_url,
     )
 
 
@@ -49,6 +52,12 @@ def parse_and_chunk(path: str, doc_id: str = None, drug_name: str = None,
                                        original_filename=original_filename)
     chunks = Chunker().chunk_document(doc)
     return [_to_rag_chunk(c) for c in chunks]
+
+
+def parse_url_and_chunk(url: str, doc_id: str = None, drug_name: str = None) -> list[RagChunk]:
+    """Fetch a patient-facing brand source and convert it to RAG chunks."""
+    doc = ParserFactory.parse_url(url, doc_id=doc_id, drug_name=drug_name)
+    return [_to_rag_chunk(c) for c in Chunker().chunk_document(doc)]
 
 
 def _register_version(chunk: RagChunk) -> None:
