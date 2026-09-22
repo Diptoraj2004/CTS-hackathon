@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   Send,
-  Paperclip,
   User,
   Stethoscope,
   Pencil,
@@ -401,9 +400,6 @@ export const AskQuestion: React.FC = () => {
                     aria-label="Ask a question about this medication"
                   />
                   <div className="f03-input-actions">
-                    <button className="f03-attach-btn" aria-label="Attach file" type="button">
-                      <Paperclip size={17} />
-                    </button>
                     <button
                       className={`f03-send-btn ${inputValue.trim() ? "f03-send-btn--active" : ""}`}
                       onClick={handleSend}
@@ -761,9 +757,6 @@ export const AskQuestion: React.FC = () => {
                     aria-label="Ask a question about this medication"
                   />
                   <div className="f03-input-actions">
-                    <button className="f03-attach-btn" aria-label="Attach file" type="button">
-                      <Paperclip size={17} />
-                    </button>
                     <button
                       className={`f03-send-btn ${inputValue.trim() ? "f03-send-btn--active" : ""}`}
                       onClick={handleSend}
@@ -911,6 +904,7 @@ export const AskQuestion: React.FC = () => {
                 >
                   <Lightbulb size={15} />
                 </div>
+
                 <h4 className="f03-info-card-title">Tip</h4>
               </div>
 
@@ -920,11 +914,11 @@ export const AskQuestion: React.FC = () => {
             </div>
           )}
         </div>
-
-        {/* Minimal footer: copyright only */}
-        <footer className="f03-footer">
-          <span>© 2026 DrugDoc AI</span>
-        </footer>
+      </section>
+      {/* Minimal footer: copyright only */}
+      <footer className="f03-footer">
+        <span>© 2026 DrugDoc AI</span>
+      </footer>
     </AppLayout>
   );
 };

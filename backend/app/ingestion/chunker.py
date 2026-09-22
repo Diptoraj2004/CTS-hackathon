@@ -95,7 +95,8 @@ class Chunker:
                         effective_date=meta.effective_date,
                         ingestion_timestamp=meta.ingestion_timestamp,
                         extraction_method="xml_text",
-                        original_filename=meta.original_filename
+                        original_filename=meta.original_filename,
+                        source=meta.source, audience=meta.audience, source_url=meta.source_url,
                     ))
         else:
             for page in doc.pages:
@@ -119,7 +120,8 @@ class Chunker:
                         effective_date=meta.effective_date,
                         ingestion_timestamp=meta.ingestion_timestamp,
                         extraction_method=page.extraction_method,
-                        original_filename=meta.original_filename
+                        original_filename=meta.original_filename,
+                        source=meta.source, audience=meta.audience, source_url=meta.source_url,
                     ))
                     
         return chunks

@@ -32,27 +32,22 @@ export const MedicationInfo: React.FC = () => {
 
   const [profile, setProfile] = useState<DrugProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const ragSources: RagSource[] | null = loadRagSources(drug, mode);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-
-    const key = drug.trim().toLowerCase();
-
-    let request = drugProfileCache.get(key);
-
-    if (!request) {
-      request = getDrugProfile(drug);
-      drugProfileCache.set(key, request);
-    }
-
-    request
+    setProfileError(null);
+    getDrugProfile(drug)
       .then((data) => {
         if (!cancelled) setProfile(data);
       })
       .catch(() => {
-        if (!cancelled) setProfile(null);
+        if (!cancelled) {
+          setProfile(null);
+          setProfileError("Verified medication information could not be loaded.");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -176,9 +171,7 @@ export const MedicationInfo: React.FC = () => {
               <div className="mi-drug-info">
                 <span className="mi-label">MEDICATION</span>
                 <h1 className="mi-drug-title">{drug}</h1>
-                <span className="mi-drug-sub">
-                  No verified information available in the current knowledge base.
-                </span>
+                <span className="mi-drug-sub">{loading ? "Loading verified information..." : profileError || profile?.uses?.[0] || "Verified medication information"}</span>
               </div>
             </div>
 
@@ -234,7 +227,7 @@ export const MedicationInfo: React.FC = () => {
                 <h2 className="mi-card-title">Drug Overview</h2>
               </div>
               <p className="mi-card-body">
-                No verified information available in the current knowledge base.
+                {loading ? "Loading verified medication information..." : profileError || profile?.uses?.join(" ") || "No verified information available in the current knowledge base."}
               </p>
             </article>
 

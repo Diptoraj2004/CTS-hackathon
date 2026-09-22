@@ -15,7 +15,7 @@ import {
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
-import { loadRagSources, RagSource } from "../data/ragService";
+import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
 
 export const SourcesEvidence: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -34,6 +34,11 @@ export const SourcesEvidence: React.FC = () => {
   // Load real RAG citations saved by ragService after the last query.
   // Returns null if the user navigates here before asking a question.
   const ragSources: RagSource[] | null = loadRagSources(drug, mode);
+  const [profile, setProfile] = React.useState<DrugProfileResponse | null>(null);
+
+  React.useEffect(() => {
+    getDrugProfile(drug).then(setProfile).catch(() => setProfile(null));
+  }, [drug]);
 
   // Download/view action — citations from the knowledge base are served by
   // the authenticated document endpoint. Alert if no URL is available.
@@ -41,7 +46,7 @@ export const SourcesEvidence: React.FC = () => {
     if (src.url) {
       window.open(src.url, "_blank", "noopener,noreferrer");
     } else {
-      alert(`Source reference: ${src.name}`);
+      window.open(`${import.meta.env.VITE_API_BASE || "http://localhost:8000"}/documents/${encodeURIComponent(src.doc || src.name)}/view`, "_blank", "noopener,noreferrer");
     }
   };
 
@@ -287,15 +292,15 @@ export const SourcesEvidence: React.FC = () => {
             <div className="f03-facts-table">
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Drug class</span>
-                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
+                <span className="f03-fact-value">{profile?.class || "No verified information available in the current knowledge base."}</span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Available as</span>
-                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
+                <span className="f03-fact-value">{profile?.forms?.join(", ") || "No verified information available in the current knowledge base."}</span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Common brands</span>
-                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
+                <span className="f03-fact-value">{profile?.drug || drug}</span>
               </div>
             </div>
 

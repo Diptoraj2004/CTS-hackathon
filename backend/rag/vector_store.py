@@ -121,15 +121,21 @@ def _ensure_fts_index(table, force: bool = False) -> None:
             print(f"[vector_store] FTS index unavailable: {exc}")
 
 
-def _where_drugs(search, drug_names: list[str] | None):
+def _where_drugs(search, drug_names: list[str] | None,
+                 source: str | None = None, audience: str | None = None):
     if drug_names:
         names = ", ".join(f"'{name.lower().replace(chr(39), chr(39) * 2)}'" for name in drug_names)
-        return search.where(f"drug_name IN ({names})")
+        search = search.where(f"drug_name IN ({names})")
+    if source:
+        search = search.where(f"source = '{source.replace(chr(39), chr(39) * 2)}'")
+    if audience:
+        search = search.where(f"audience = '{audience.replace(chr(39), chr(39) * 2)}'")
     return search
 
 
 def hybrid_search(query: str, drug_names: list[str] | None = None,
-                  limit: int = config.TOP_K) -> list[dict]:
+                  limit: int = config.TOP_K, source: str | None = None,
+                  audience: str | None = None) -> list[dict]:
     """Run vector and BM25 searches, then fuse their ranks with RRF.
 
     The returned rows retain ``_distance`` for the existing cosine-based
@@ -141,14 +147,14 @@ def hybrid_search(query: str, drug_names: list[str] | None = None,
 
     candidate_limit = min(max(limit * 3, 10), table.count_rows())
     vector_rows = _where_drugs(
-        table.search(embed([query])[0]).metric("cosine"), drug_names
+        table.search(embed([query])[0]).metric("cosine"), drug_names, source, audience
     ).limit(candidate_limit).to_list()
 
     fts_rows = []
     _ensure_fts_index(table)
     try:
         fts_rows = _where_drugs(
-            table.search(query, query_type="fts"), drug_names
+            table.search(query, query_type="fts"), drug_names, source, audience
         ).limit(candidate_limit).to_list()
     except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
         print(f"[vector_store] FTS search unavailable; using vector results: {exc}")
@@ -207,6 +213,12 @@ def add_chunks(chunks: list[Chunk]) -> None:
             table = db.open_table(config.COLLECTION_NAME)
             if "original_filename" not in table.schema.names:
                 table.add_columns({"original_filename": "CAST(NULL AS string)"})
+            if "source" not in table.schema.names:
+                table.add_columns({"source": "CAST('label' AS string)"})
+            if "audience" not in table.schema.names:
+                table.add_columns({"audience": "CAST('clinician' AS string)"})
+            if "source_url" not in table.schema.names:
+                table.add_columns({"source_url": "CAST(NULL AS string)"})
             if hasattr(table, "merge_insert"):
                 # True atomic upsert-by-key where the installed LanceDB
                 # supports it -- no window where a chunk_id is briefly

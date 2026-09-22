@@ -29,6 +29,9 @@ Rules:
     tied to its population, dose, timeframe, or study description and state when they cannot be compared.
 - Prefer direct reported statistics over general adverse-effect descriptions, and cite the excerpt
     containing each statistic.
+- When [FAERS] context is present, treat it as spontaneous post-market report counts only, never as
+    incidence, prevalence, clinical-trial frequency, or proof of causality. Use official label excerpts
+    as the primary clinical source. Any statement based on FAERS must include [FAERS].
 - If the excerpts do not contain the answer, reply with exactly: {NOT_IN_CONTEXT}
 - Never invent doses, numbers, units, or drug names.
 - Do not diagnose anyone or tell them to change their treatment."""
@@ -59,7 +62,8 @@ def build_context_blocks(evidence: list[RetrievedChunk]) -> list[str]:
     return blocks
 
 
-def build_messages(info: QueryInfo, evidence: list[RetrievedChunk]) -> list[dict]:
+def build_messages(info: QueryInfo, evidence: list[RetrievedChunk],
+                   faers_context: str | None = None) -> list[dict]:
     about = f" (about {', '.join(info.drug_names)})" if info.drug_names else ""
     memory = ""
     if info.conversation_summary:
@@ -73,8 +77,11 @@ def build_messages(info: QueryInfo, evidence: list[RetrievedChunk]) -> list[dict
     # <instructions> tags telling the model the context is reference data,
     # never a command to obey -- this existed in injection_guard.py but was
     # never actually called; the prompt was just plain string concatenation.
+    context_blocks = build_context_blocks(evidence)
+    if faers_context:
+        context_blocks.append(faers_context)
     user = injection_guard.delimit_context(
-        build_context_blocks(evidence),
+        context_blocks,
         memory + f"Question{about}: {info.original_query}",
     )
     return [
@@ -107,8 +114,9 @@ def _call_ollama(messages: list[dict]) -> str:
         raise GenerationError(f"Ollama call failed ({type(e).__name__}): {e}") from e
 
 
-def generate(info: QueryInfo, evidence: list[RetrievedChunk]) -> Generation:
-    messages = build_messages(info, evidence)
+def generate(info: QueryInfo, evidence: list[RetrievedChunk],
+             faers_context: str | None = None) -> Generation:
+    messages = build_messages(info, evidence, faers_context=faers_context)
     if os.getenv("GROQ_API_KEY"):
         try:
             return Generation(text=_call_groq(messages).strip(), model=f"groq:{config.GROQ_MODEL}")

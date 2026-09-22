@@ -28,7 +28,8 @@ def section_matches(section: str, wanted: list[str]) -> bool:
 
 def retrieve(query: str, drug_names: Optional[list[str]] = None,
              top_k: int = config.TOP_K,
-             sections: Optional[list[str]] = None) -> list[RetrievedChunk]:
+             sections: Optional[list[str]] = None,
+             preferred_audience: str | None = None) -> list[RetrievedChunk]:
     table = get_table()
     if table is None or table.count_rows() == 0:
         return []
@@ -42,11 +43,15 @@ def retrieve(query: str, drug_names: Optional[list[str]] = None,
         fields = {k: v for k, v in row.items()
               if k not in ("vector", "_distance", "_score", "_hybrid_score",
                        "_retrieval_score", "_fts_rank")}
-        results.append(RetrievedChunk(chunk=Chunk(**fields), score=round(score, 3)))
+        preferred_bonus = 0.04 if preferred_audience and fields.get("audience") == preferred_audience \
+            and fields.get("source") == "brand_site" else 0.0
+        results.append(RetrievedChunk(chunk=Chunk(**fields), score=round(score + preferred_bonus, 3)))
 
     if sections:
         results.sort(key=lambda r: r.score + (SECTION_BOOST if section_matches(r.chunk.section, sections) else 0),
                      reverse=True)
+    elif preferred_audience:
+        results.sort(key=lambda r: r.score, reverse=True)
     return results[:top_k]
 
 

@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 
-from backend.app.ingestion.export_to_rag_store import store_chunks
+from backend.app.ingestion.export_to_rag_store import parse_url_and_chunk, store_chunks
 from backend.app.ingestion.upload_dispatcher import SUPPORTED_SUFFIXES, parse_upload
 from backend.analytics import (history, recent_activity, record_processed,
                                 record_query, record_source_usage, record_upload)
@@ -331,6 +331,30 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
         stored_path.unlink(missing_ok=True)
 
 
+def _run_brand_ingestion(job_id: str, url: str, drug_name: str, doc_id: str | None) -> None:
+    try:
+        update_job(job_id, stage="PARSING", detail="Fetching and parsing the brand source.")
+        chunks = parse_url_and_chunk(url, doc_id=doc_id, drug_name=drug_name)
+        update_job(job_id, chunks_found=len(chunks))
+        if not chunks:
+            raise ValueError("The brand source contained no extractable text.")
+        update_job(job_id, stage="SCANNING", detail="Scanning brand-source chunks for hidden instructions.")
+        if any(injection_guard.looks_like_injection(chunk.text) for chunk in chunks):
+            raise ValueError("Brand source contains an embedded instruction and was rejected.")
+        update_job(job_id, stage="EMBEDDING", detail="Embedding brand-source chunks.")
+        count = store_chunks(chunks)
+        record_processed()
+        record_source_usage(chunks[0].source_type or "brand_site")
+        query_understanding.invalidate_known_drugs_cache()
+        audit_log.log("INGESTION_ACCEPTED", f"brand source={url}: {count} chunks stored",
+                      resource=f"document:{url}", status="SUCCESS")
+        update_job(job_id, stage="STORED", detail=f"Stored {count} chunk(s).", chunks_stored=count)
+    except Exception as exc:
+        audit_log.log("INGESTION_FAILED", f"brand source={url}: {exc}",
+                      resource=f"document:{url}", status="FAILED")
+        update_job(job_id, stage="FAILED", detail="Brand-source ingestion failed.", error=str(exc))
+
+
 @app.get("/admin/auth/check", dependencies=[Depends(require_admin_key)])
 def admin_auth_check(request: Request):
     audit_log.log("ADMIN_AUTH_SUCCESS", "Admin authentication succeeded",
@@ -365,6 +389,20 @@ async def ingest_document(file: UploadFile, drug_name: str, request: Request, do
 
     _ingest_executor.submit(_run_ingestion, job["job_id"], stored_path, clean_drug_name, doc_id, safe_filename)
     return {"job_id": job["job_id"], "status": "QUEUED"}
+
+
+@app.post("/ingest-url", dependencies=[Depends(require_admin_key)])
+def ingest_url(url: str, drug_name: str, request: Request, doc_id: str | None = None):
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(status_code=422, detail="url must be an absolute HTTP(S) URL")
+    clean_drug_name = normalize_drug_name(drug_name)
+    job = create_job(filename=url, drug_name=clean_drug_name, doc_id=doc_id)
+    record_upload()
+    audit_log.log("BRAND_SOURCE_REQUESTED", f"url={url} (drug={clean_drug_name})",
+                  ip=_client_ip(request), resource=f"document:{url}", status="QUEUED")
+    _ingest_executor.submit(_run_brand_ingestion, job["job_id"], url, clean_drug_name, doc_id)
+    return {"job_id": job["job_id"], "status": "QUEUED", "source": "brand_site"}
 
 
 

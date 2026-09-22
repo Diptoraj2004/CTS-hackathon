@@ -15,6 +15,7 @@ export interface RagSource {
   section?: string;
   page?: number | string | null;
   chunk_id?: string;
+  source?: string;
 }
 
 export interface RagBulletItem {
@@ -85,6 +86,8 @@ function mapSources(citations: any[]): RagSource[] {
     section: c.section,
     page: c.page ?? null,
     chunk_id: c.chunk_id,
+    url: c.url || (c.doc ? `${API_BASE}/documents/${encodeURIComponent(c.doc)}/view` : undefined),
+    type: c.source,
   }));
 }
 

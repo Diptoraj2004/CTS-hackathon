@@ -118,7 +118,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => 
             </div>
             <NotificationDropdown />
             <div className="admin-user-pill">
-              <span className="admin-user-avatar">A</span>
+              <span className="admin-user-avatar">{userName.charAt(0).toUpperCase()}</span>
               <span className="admin-user-name">{userName.charAt(0).toUpperCase() + userName.slice(1)}</span>
             </div>
             <button className="admin-logout-btn" onClick={handleLogout} aria-label="Sign out" title="Sign out">
@@ -135,13 +135,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => 
         {/* Footer */}
         <footer className="admin-footer">
           <span>© 2026 DrugDoc AI</span>
-          <div className="admin-footer-links">
-            <a href="#privacy">Privacy</a>
-            <span>|</span>
-            <a href="#terms">Terms</a>
-            <span>|</span>
-            <a href="#support">Support</a>
-          </div>
+          <span className="admin-footer-links">Evidence-based · Audit-logged</span>
         </footer>
       </div>
     </div>
