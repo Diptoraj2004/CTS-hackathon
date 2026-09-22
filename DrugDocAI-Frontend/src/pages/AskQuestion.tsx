@@ -21,6 +21,7 @@ import {
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import { getRagResponse, RagResponse, getDrugProfile, DrugProfileResponse } from "../data/ragService";
+import { useCurrentUser } from "../hooks/useCurrentUser";
 
 const NO_INFO = "No verified information available in the current knowledge base.";
 
@@ -58,9 +59,10 @@ const BotAvatar: React.FC = () => (
 export const AskQuestion: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { user } = useCurrentUser();
 
   const drug = searchParams.get("drug") || "Amoxicillin";
-  const mode = (searchParams.get("mode") || "professional") as "patient" | "professional";
+  const mode = (searchParams.get("mode") || user?.role === "doctor" ? "professional" : "patient") as "patient" | "professional";
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
 
@@ -441,7 +443,7 @@ export const AskQuestion: React.FC = () => {
                   <div className="f06-user-container">
                     <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
                       <div className="f04-user-avatar" aria-hidden="true">
-                        <span>A</span>
+                        <span>{user.avatarInitial}</span>
                       </div>
                       <div className="f04-user-bubble">
                         <p className="f04-user-text">{ragData.question}</p>
@@ -555,7 +557,7 @@ export const AskQuestion: React.FC = () => {
                   <div className="f06-user-container">
                     <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
                       <div className="f04-user-avatar" aria-hidden="true">
-                        <span>A</span>
+                        <span>{user.avatarInitial}</span>
                       </div>
                       <div className="f04-user-bubble">
                         <p className="f04-user-text">{ragData.question}</p>
@@ -647,7 +649,7 @@ export const AskQuestion: React.FC = () => {
                   {/* User Question */}
                   <div className="f04-user-row">
                     <div className="f04-user-avatar" aria-hidden="true">
-                      <span>A</span>
+                      <span>{user.avatarInitial}</span>
                     </div>
                     <div className="f04-user-bubble">
                       <p className="f04-user-text">{activeQuestion}</p>
@@ -775,7 +777,7 @@ export const AskQuestion: React.FC = () => {
 
         {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
         <div className="f03-right-col">
-          {activeQuestion && !isFetching &&(
+          {activeQuestion && !isFetching && (
             <>
               {/* Card 1: About [Medication] (Present on F-03, F-04 & F-06) */}
               <div className="f03-info-card">
