@@ -191,7 +191,7 @@ export const Landing: React.FC = () => {
         </div>
       </section>
 
-      <Footer isMinimal={false} />
+      <Footer />
     </AppLayout>
   );
 };
