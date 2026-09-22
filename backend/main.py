@@ -443,6 +443,10 @@ def list_documents(page: int = 1, page_size: int = 25, drug: str | None = None,
 def list_drugs():
     return {"drugs": query_understanding.known_drugs()}
 
+@app.get("/review/pending", dependencies=[Depends(require_admin_key)])
+def pending_reviews():
+    return review_queue.pending()
+
 
 @app.get("/review/{request_id}")
 def get_review(request_id: str):
@@ -460,11 +464,6 @@ def forget_session(session_id: str, request: Request):
     audit_log.log("SESSION_ERASURE_REQUESTED", f"session={session_id}",
                   ip=_client_ip(request), resource=f"session:{session_id}", status="SUCCESS")
     return {"status": "ACKNOWLEDGED", "cleared": cleared}
-
-
-@app.get("/review/pending", dependencies=[Depends(require_admin_key)])
-def pending_reviews():
-    return review_queue.pending()
 
 
 @app.post("/review/{request_id}", dependencies=[Depends(require_admin_key)])

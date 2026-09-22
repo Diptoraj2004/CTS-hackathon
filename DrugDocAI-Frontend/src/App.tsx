@@ -14,6 +14,8 @@ import { DocumentLibrary } from "./pages/admin/DocumentLibrary";
 import { UploadProcessing } from "./pages/admin/UploadProcessing";
 import { AuditLogs } from "./pages/admin/AuditLogs";
 
+import { HumanSupport } from "./pages/admin/HumanSupport";
+
 function App() {
   return (
     <Routes>
@@ -32,6 +34,7 @@ function App() {
       <Route path="/admin/library"   element={<RequireAdmin><DocumentLibrary /></RequireAdmin>} />
       <Route path="/admin/upload"    element={<RequireAdmin><UploadProcessing /></RequireAdmin>} />
       <Route path="/admin/audit"     element={<RequireAdmin><AuditLogs /></RequireAdmin>} />
+      <Route path="/admin/support"   element={<RequireAdmin><HumanSupport /></RequireAdmin>} />
 
       {/* ── Fallback ── */}
       <Route path="*" element={<Landing />} />
