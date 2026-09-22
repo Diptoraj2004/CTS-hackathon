@@ -168,7 +168,7 @@ export const AuditLogs: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   // ── Filter States ──
-  const [dateRange, setDateRange]   = useState<string>("");
+  const [dateRange, setDateRange] = useState<string>("");
   const [userFilter, setUserFilter] = useState<string>("all");
   const [actionFilter, setActionFilter] = useState<string>("all");
   const [resourceFilter, setResourceFilter] = useState<string>("all");
@@ -229,14 +229,19 @@ export const AuditLogs: React.FC = () => {
 
   // Filter computation
   const filteredLogs = useMemo(() => {
+    const query = dateRange.trim().toLowerCase();
+
     return logs.filter((log) => {
       if (userFilter !== "all" && log.user !== userFilter) return false;
       if (actionFilter !== "all" && log.action !== actionFilter) return false;
       if (resourceFilter !== "all" && log.resource !== resourceFilter) return false;
       if (statusFilter !== "all" && log.status !== statusFilter) return false;
+
+      if (query && !log.timestamp.toLowerCase().includes(query)) return false;
+
       return true;
     });
-  }, [logs, userFilter, actionFilter, resourceFilter, statusFilter]);
+  }, [logs, userFilter, actionFilter, resourceFilter, statusFilter, dateRange]);
 
   // Reset pagination when filters change
   const handleFilterChange = (setter: React.Dispatch<React.SetStateAction<string>>, value: string) => {
