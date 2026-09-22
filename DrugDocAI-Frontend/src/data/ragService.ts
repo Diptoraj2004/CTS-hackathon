@@ -61,7 +61,7 @@ function makeUuid(): string {
   });
 }
 
-function sessionId(): string {
+export function getSessionId(): string {
   const key = "drugdoc_session_id";
   let id = sessionStorage.getItem(key);
   if (!id) {
@@ -70,6 +70,12 @@ function sessionId(): string {
   }
   return id;
 }
+
+export function setSessionId(newId: string): void {
+  const key = "drugdoc_session_id";
+  sessionStorage.setItem(key, newId);
+}
+
 
 function confidenceBucket(score: number): "High" | "Medium" | "Low" {
   if (score >= 0.75) return "High";
@@ -190,7 +196,7 @@ export async function getRagResponse(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        session_id: sessionId(),
+        session_id: getSessionId(),
         query: question,
         mode: backendMode,
         // Previously never sent — the selected drug (from the medication
@@ -337,3 +343,61 @@ export function getDrugProfile(
   drugProfileCache.set(normalizedDrug, request);
   return request;
 }
+
+export interface ContextStatus {
+  session_id: string;
+  estimated_tokens: number;
+  context_limit: number;
+  response_reserve: number;
+  remaining_tokens: number;
+  warning_threshold: number;
+  near_limit: boolean;
+  message_count: number;
+}
+
+export interface SessionRollover {
+  old_session_id: string;
+  new_session_id: string;
+  summary: string;
+  prompt_to_send: string;
+  status: "ROLLED_OVER";
+}
+
+export async function getContextStatus(
+  sId?: string
+): Promise<ContextStatus | null> {
+  const id = sId || getSessionId();
+  try {
+    const res = await fetch(
+      `${API_BASE}/session/${encodeURIComponent(id)}/context-status`
+    );
+    if (!res.ok) return null;
+    return (await res.json()) as ContextStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function rolloverSession(
+  sId?: string
+): Promise<SessionRollover | null> {
+  const id = sId || getSessionId();
+  try {
+    const res = await fetch(
+      `${API_BASE}/session/${encodeURIComponent(id)}/rollover`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as SessionRollover;
+    if (data && data.new_session_id) {
+      setSessionId(data.new_session_id);
+    }
+    return data;
+  } catch {
+    return null;
+  }
+}
+

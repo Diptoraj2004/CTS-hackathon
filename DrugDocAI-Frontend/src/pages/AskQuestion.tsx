@@ -20,10 +20,20 @@ import {
 } from "lucide-react";
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
-import { getRagResponse, RagResponse, getDrugProfile, DrugProfileResponse } from "../data/ragService";
+import {
+  getRagResponse,
+  RagResponse,
+  getDrugProfile,
+  DrugProfileResponse,
+  getContextStatus,
+  rolloverSession,
+  RagSource,
+} from "../data/ragService";
 import { useCurrentUser } from "../hooks/useCurrentUser";
 
 const NO_INFO = "No verified information available in the current knowledge base.";
+const DISCLAIMER =
+  "This information is from official medical sources and is not a substitute for professional medical advice.";
 
 function buildSuggestedQuestions(drug: string): string[] {
   return [
@@ -34,6 +44,16 @@ function buildSuggestedQuestions(drug: string): string[] {
     `What precautions should I know?`,
     `I accidentally took twice my prescribed dose. What should I do?`,
   ];
+}
+
+interface TurnItem {
+  id: string;
+  question: string;
+  timestamp: string;
+  isFetching: boolean;
+  answerState: "typing" | "revealed";
+  ragData: RagResponse | null;
+  isEscalated?: boolean;
 }
 
 // ── Typing dots animation component ──────────────────────────────────────────
@@ -55,7 +75,7 @@ const BotAvatar: React.FC = () => (
   </div>
 );
 
-// ── Main Page (Handles F-03 Greeting, F-04 Answer/Results, F-06 High-Risk & F-07 Low-Confidence) ───
+// ── Main Page (Handles Multi-turn Chat, F-03 Greeting, F-04 Answer, F-06 High-Risk & F-07 Low-Confidence) ───
 export const AskQuestion: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -82,10 +102,27 @@ export const AskQuestion: React.FC = () => {
 
   const suggestedQuestions = buildSuggestedQuestions(drug);
 
-  // Active question is transient UI state (resets to null on browser refresh)
-  const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
-  const [explicitRisk, setExplicitRisk] = useState<string | null>(null);
-  const [explicitConfidence, setExplicitConfidence] = useState<string | null>(null);
+  // Conversation history turns
+  const [turns, setTurns] = useState<TurnItem[]>([]);
+  const [nearLimit, setNearLimit] = useState(false);
+  const [isRollingOver, setIsRollingOver] = useState(false);
+  const [rolloverNotice, setRolloverNotice] = useState<string | null>(null);
+
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sourcesCardRef = useRef<HTMLDivElement>(null);
+  const [highlightSources, setHighlightSources] = useState(false);
+  const [inputValue, setInputValue] = useState("");
+
+  // F-03 Greeting state (triggers typing dots on initial load)
+  const [greetingState, setGreetingState] = useState<"typing" | "revealed">("typing");
+  useEffect(() => {
+    if (turns.length === 0) {
+      setGreetingState("typing");
+      const t = setTimeout(() => setGreetingState("revealed"), 1200);
+      return () => clearTimeout(t);
+    }
+  }, [turns.length, drug]);
 
   // Clean any stale URL query params on mount to keep question state transient
   useEffect(() => {
@@ -94,93 +131,79 @@ export const AskQuestion: React.FC = () => {
     }
   }, []);
 
-  // Retrieve real RAG data from the backend for the active question
-  const [ragData, setRagData] = useState<RagResponse | null>(null);
-  const [isFetching, setIsFetching] = useState(false);
-
+  // Auto-scroll chat window to bottom when new turns arrive or finishes loading
   useEffect(() => {
-    if (!activeQuestion) {
-      setRagData(null);
-      return;
+    if (turns.length > 0) {
+      chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-    let cancelled = false;
-    setIsFetching(true);
-    getRagResponse(activeQuestion, drug, mode)
-      .then((data) => {
-        if (!cancelled) setRagData(data);
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setRagData({
-            question: activeQuestion,
-            medication: drug,
-            mode,
-            risk_level: "normal",
-            answerLead: "Something went wrong reaching DrugDoc AI's backend.",
-            bulletPoints: [],
-            answerFollowUp: "Please check your connection and try again.",
-            disclaimer:
-              "This information is from official medical sources and is not a substitute for professional medical advice.",
-            confidence: "Low",
-            confidenceDetail: "Backend request failed.",
-            sources: [],
-          });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setIsFetching(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeQuestion, drug, mode]);
+  }, [turns]);
 
-  const isHighRisk = ragData?.risk_level === "high";
-  const isLowConfidence = !isHighRisk && (ragData?.confidence === "Low" || ragData?.confidence === "low");
+  // Submit question -> appends to turns
+  const handleAskQuestion = useCallback(
+    (q: string) => {
+      const cleanQ = q.trim();
+      if (!cleanQ) return;
 
-  // F-03 Greeting state (triggers typing dots on initial load / refresh)
-  const [greetingState, setGreetingState] = useState<"typing" | "revealed">("typing");
-  useEffect(() => {
-    if (!activeQuestion) {
-      setGreetingState("typing");
-      const t = setTimeout(() => setGreetingState("revealed"), 1200);
-      return () => clearTimeout(t);
-    }
-  }, [activeQuestion, drug]);
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      const turnId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36);
 
-  // F-04 Answer state — reflects the real fetch, not a fixed fake delay
-  const [answerState, setAnswerState] = useState<"typing" | "revealed">("typing");
-  useEffect(() => {
-    if (activeQuestion && !isHighRisk && !isLowConfidence) {
-      setAnswerState(isFetching ? "typing" : "revealed");
-    }
-  }, [activeQuestion, isHighRisk, isLowConfidence, isFetching]);
+      const newTurn: TurnItem = {
+        id: turnId,
+        question: cleanQ,
+        timestamp: timeStr,
+        isFetching: true,
+        answerState: "typing",
+        ragData: null,
+      };
 
-  // Input, timestamp and escalation feedback states
-  const [inputValue, setInputValue] = useState("");
-  const [timestamp, setTimestamp] = useState("12:48 AM");
-  const [highlightSources, setHighlightSources] = useState(false);
-  const [isEscalated, setIsEscalated] = useState(false);
+      setTurns((prev) => [...prev, newTurn]);
+      setInputValue("");
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const sourcesCardRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    setTimestamp(timeStr || "12:48 AM");
-    setIsEscalated(false);
-  }, [activeQuestion]);
-
-  // Submit question -> activates F-04, F-06, or F-07 in transient state
-  const handleAskQuestion = useCallback((q: string, risk?: string, confidence?: string) => {
-    const cleanQ = q.trim();
-    if (!cleanQ) return;
-    setExplicitRisk(risk || null);
-    setExplicitConfidence(confidence || null);
-    setActiveQuestion(cleanQ);
-    setInputValue("");
-  }, []);
+      getRagResponse(cleanQ, drug, mode)
+        .then(async (data) => {
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === turnId
+                ? { ...t, isFetching: false, answerState: "revealed", ragData: data }
+                : t
+            )
+          );
+          // Check context status after answer is returned
+          const status = await getContextStatus();
+          if (status && status.near_limit) {
+            setNearLimit(true);
+          }
+        })
+        .catch(() => {
+          setTurns((prev) =>
+            prev.map((t) =>
+              t.id === turnId
+                ? {
+                    ...t,
+                    isFetching: false,
+                    answerState: "revealed",
+                    ragData: {
+                      question: cleanQ,
+                      medication: drug,
+                      mode,
+                      risk_level: "normal",
+                      answerLead: "Something went wrong reaching DrugDoc AI's backend.",
+                      bulletPoints: [],
+                      answerFollowUp: "Please check your connection and try again.",
+                      disclaimer: DISCLAIMER,
+                      confidence: "Low",
+                      confidenceDetail: "Backend request failed.",
+                      sources: [],
+                    },
+                  }
+                : t
+            )
+          );
+        });
+    },
+    [drug, mode]
+  );
 
   const handleSend = () => {
     if (!inputValue.trim()) return;
@@ -204,24 +227,25 @@ export const AskQuestion: React.FC = () => {
     setTimeout(() => setHighlightSources(false), 2000);
   };
 
-  // Actions for F-06 High-Risk & F-07 Low-Confidence
-  const handleBackToAnswer = () => {
-    handleAskQuestion(`What are the common side effects of ${drug}?`);
-  };
-
-  const handleEscalateHuman = () => {
-    setIsEscalated(true);
+  const handleEscalateTurn = (turnId: string) => {
+    setTurns((prev) =>
+      prev.map((t) => (t.id === turnId ? { ...t, isEscalated: true } : t))
+    );
   };
 
   const handleViewDocs = () => {
     navigate(`/docs?drug=${encodeURIComponent(drug)}&mode=${mode}`);
   };
 
-  const handleAskAnotherQuestion = () => {
-    setActiveQuestion(null);
-    setExplicitRisk(null);
-    setExplicitConfidence(null);
-    setInputValue("");
+  const handleRollover = async () => {
+    setIsRollingOver(true);
+    const res = await rolloverSession();
+    setIsRollingOver(false);
+    if (res) {
+      setNearLimit(false);
+      setRolloverNotice("Session context limit reached. Rolled over to a new session with retained context summary.");
+      setTimeout(() => setRolloverNotice(null), 8000);
+    }
   };
 
   // Auto-resize textarea
@@ -231,6 +255,16 @@ export const AskQuestion: React.FC = () => {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 140) + "px";
   }, [inputValue]);
+
+  // Aggregate or latest active sources for right column
+  const activeSources: RagSource[] = React.useMemo(() => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].ragData?.sources && turns[i].ragData!.sources.length > 0) {
+        return turns[i].ragData!.sources;
+      }
+    }
+    return [];
+  }, [turns]);
 
   const modeLabel = mode === "patient" ? "Patient / Caregiver" : "Healthcare Professional";
   const modeDesc =
@@ -244,7 +278,7 @@ export const AskQuestion: React.FC = () => {
       <Header showAvatar={true} />
 
       <section className="f03-container container">
-        {/* ── LEFT COLUMN (Identical in F-03, F-04 & F-06) ────────────────── */}
+        {/* ── LEFT COLUMN ────────────────────────────────────────────────── */}
         <div className="f03-left-col">
           <div className="f02-step-indicator">
             <span className="step-label">STEP 2 OF 2</span>
@@ -347,7 +381,7 @@ export const AskQuestion: React.FC = () => {
             </div>
 
             {/* 2. CHAT STREAM / CONTENT */}
-            {!activeQuestion ? (
+            {turns.length === 0 ? (
               /* ── F-03 GREETING & SUGGESTIONS VIEW ── */
               <>
                 <div className="f03-chat-area">
@@ -414,342 +448,389 @@ export const AskQuestion: React.FC = () => {
                   Press Enter to send&nbsp;&nbsp;•&nbsp;&nbsp;Shift + Enter for a new line
                 </p>
               </>
-            ) : isHighRisk ? (
-              /* ── F-06 HIGH-RISK / HUMAN ESCALATION VIEW ── */
-              <div className="f06-container">
-                <button
-                  type="button"
-                  className="f06-back-link"
-                  onClick={handleBackToAnswer}
-                  aria-label="Back to answer"
-                >
-                  <ArrowLeft size={16} />
-                  <span>Back to answer</span>
-                </button>
-
-                <div className="f06-high-risk-card">
-                  {/* Warning Header */}
-                  <div className="f06-warning-header">
-                    <AlertTriangle size={34} className="f06-warning-icon" />
-                    <div>
-                      <h3 className="f06-warning-title">HIGH-RISK QUESTION</h3>
-                      <p className="f06-warning-sub">
-                        This question may require individual medical evaluation.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* User Question Row */}
-                  <div className="f06-user-container">
-                    <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
-                      <div className="f04-user-avatar" aria-hidden="true">
-                        <span>{user.avatarInitial}</span>
-                      </div>
-                      <div className="f04-user-bubble">
-                        <p className="f04-user-text">{ragData.question}</p>
-                      </div>
-                    </div>
-                    <div className="f04-user-meta">
-                      <span className="f04-timestamp">{timestamp}</span>
-                    </div>
-                  </div>
-
-                  {/* Explanatory Paragraphs */}
-                  <div className="f06-paragraphs">
-                    <p>{ragData.answerLead}</p>
-                    <p>{ragData.answerFollowUp}</p>
-                  </div>
-
-                  {/* 3 Action Buttons with Unified Teal Styling */}
-                  <div className="f06-actions-list">
-                    {/* Action 1: Escalate to Human Expert */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleEscalateHuman}
-                      >
-                        <div className="f06-action-btn-left">
-                          <User size={18} />
-                          <span>Escalate to Human Expert</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        Get in touch with a qualified healthcare professional.
-                      </span>
-                    </div>
-
-                    {/* Action 2: View Relevant Documentation */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleViewDocs}
-                      >
-                        <div className="f06-action-btn-left">
-                          <FileText size={18} />
-                          <span>View Relevant Documentation</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        See official safety information from trusted medical sources.
-                      </span>
-                    </div>
-
-                    {/* Action 3: Ask Another Question */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleAskAnotherQuestion}
-                      >
-                        <div className="f06-action-btn-left">
-                          <MessageCircle size={18} />
-                          <span>Ask Another Question</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        Go back and ask a different question about your medication.
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Escalation Feedback Notification */}
-                  {isEscalated && (
-                    <div className="f06-escalation-alert">
-                      <CheckCircle2 size={18} color="var(--teal-700)" />
-                      <span>
-                        Escalation initiated. A qualified clinical pharmacist has been notified.
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : isLowConfidence ? (
-              /* ── F-07 LOW-CONFIDENCE VIEW ── */
-              <div className="f06-container f07-container">
-                <button
-                  type="button"
-                  className="f06-back-link"
-                  onClick={handleBackToAnswer}
-                  aria-label="Back to answer"
-                >
-                  <ArrowLeft size={16} />
-                  <span>Back to answer</span>
-                </button>
-
-                <div className="f07-low-conf-card">
-                  {/* Warning Header */}
-                  <div className="f07-warning-header">
-                    <AlertTriangle size={34} className="f07-warning-icon" />
-                    <div>
-                      <h3 className="f07-warning-title">LOW CONFIDENCE ANSWER</h3>
-                      <p className="f07-warning-sub">
-                        We're not fully confident about this answer.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* User Question Row */}
-                  <div className="f06-user-container">
-                    <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
-                      <div className="f04-user-avatar" aria-hidden="true">
-                        <span>{user.avatarInitial}</span>
-                      </div>
-                      <div className="f04-user-bubble">
-                        <p className="f04-user-text">{ragData.question}</p>
-                      </div>
-                    </div>
-                    <div className="f04-user-meta">
-                      <span className="f04-timestamp">{timestamp}</span>
-                    </div>
-                  </div>
-
-                  {/* Explanatory Paragraphs */}
-                  <div className="f06-paragraphs">
-                    <p>{ragData.answerLead}</p>
-                    <p>{ragData.answerFollowUp}</p>
-                  </div>
-
-                  {/* 3 Action Buttons with Unified Teal Styling */}
-                  <div className="f06-actions-list">
-                    {/* Action 1: Escalate to Human Expert */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleEscalateHuman}
-                      >
-                        <div className="f06-action-btn-left">
-                          <User size={18} />
-                          <span>Escalate to Human Expert</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        Get in touch with a qualified healthcare professional.
-                      </span>
-                    </div>
-
-                    {/* Action 2: View Related Documentation */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleViewDocs}
-                      >
-                        <div className="f06-action-btn-left">
-                          <FileText size={18} />
-                          <span>View Related Documentation</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        See available information from trusted medical sources.
-                      </span>
-                    </div>
-
-                    {/* Action 3: Try a Different Question */}
-                    <div className="f06-action-item">
-                      <button
-                        type="button"
-                        className="f06-action-btn"
-                        onClick={handleAskAnotherQuestion}
-                      >
-                        <div className="f06-action-btn-left">
-                          <MessageCircle size={18} />
-                          <span>Try a Different Question</span>
-                        </div>
-                        <ArrowRight size={18} />
-                      </button>
-                      <span className="f06-action-subtext">
-                        Rephrase or ask a more specific question about your medication.
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Escalation Feedback Notification */}
-                  {isEscalated && (
-                    <div className="f06-escalation-alert">
-                      <CheckCircle2 size={18} color="var(--teal-700)" />
-                      <span>
-                        Escalation initiated. A qualified clinical pharmacist has been notified.
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </div>
             ) : (
-              /* ── F-04 ANSWER & EVIDENCE VIEW ── */
-              <>
-                <div className="f04-chat-area">
-                  {/* User Question */}
-                  <div className="f04-user-row">
-                    <div className="f04-user-avatar" aria-hidden="true">
-                      <span>{user.avatarInitial}</span>
-                    </div>
-                    <div className="f04-user-bubble">
-                      <p className="f04-user-text">{activeQuestion}</p>
-                    </div>
-                  </div>
-                  <div className="f04-user-meta">
-                    <span className="f04-timestamp">{timestamp}</span>
-                  </div>
+              /* ── MULTI-TURN CONVERSATION STREAM VIEW ── */
+              <div style={{ padding: "16px 20px" }}>
+                <div className="f04-chat-area" style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                  {turns.map((turn) => {
+                    const isHighRisk = turn.ragData?.risk_level === "high";
+                    const isLowConfidence =
+                      !isHighRisk &&
+                      (turn.ragData?.confidence === "Low" || turn.ragData?.confidence === "low");
 
-                  {/* DrugDoc AI Response */}
-                  <div className="f04-bot-row">
-                    <BotAvatar />
-                    <div className="f04-bot-bubble">
-                      {answerState === "typing" ? (
-                        <div className="f04-typing-wrapper">
-                          <TypingDots />
-                        </div>
-                      ) : (
-                        ragData && (
-                          <div className="f04-answer-content">
-                            <p className="f04-answer-lead" style={{ whiteSpace: "pre-wrap" }}>
-                              {ragData.answerLead}
-                            </p>
-
-                            {ragData.bulletPoints && ragData.bulletPoints.length > 0 && (
-                              <ul className="f04-side-effects-list">
-                                {ragData.bulletPoints.map((bp, idx) => (
-                                  <li key={idx}>
-                                    {bp.label && <strong>{bp.label} </strong>}
-                                    {bp.text}
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            {ragData.answerFollowUp && (
-                              <p className="f04-answer-sub">
-                                {ragData.answerFollowUp}
-                              </p>
-                            )}
-
-                            {/* Embedded Medical Disclaimer */}
-                            <div className="f04-answer-disclaimer">
-                              <div className="f04-disclaimer-icon-wrap" aria-hidden="true">
-                                <Info size={16} />
+                    if (isHighRisk) {
+                      return (
+                        <div key={turn.id} className="f06-container" style={{ width: "100%", margin: 0, padding: 0 }}>
+                          <div className="f06-high-risk-card">
+                            <div className="f06-warning-header">
+                              <AlertTriangle size={34} className="f06-warning-icon" />
+                              <div>
+                                <h3 className="f06-warning-title">HIGH-RISK QUESTION</h3>
+                                <p className="f06-warning-sub">
+                                  This question may require individual medical evaluation.
+                                </p>
                               </div>
-                              <p className="f04-disclaimer-text">{ragData.disclaimer}</p>
                             </div>
 
-                            {/* Answer Metadata Bar: Confidence & Sources */}
-                            <div className="f04-meta-bar">
-                              <div className="f04-meta-confidence">
-                                <div className="f04-confidence-header">
-                                  <div className="f04-conf-icon" aria-hidden="true">
-                                    <BarChart2 size={16} />
+                            <div className="f06-user-container">
+                              <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
+                                <div className="f04-user-avatar" aria-hidden="true">
+                                  <span>{user.avatarInitial}</span>
+                                </div>
+                                <div className="f04-user-bubble">
+                                  <p className="f04-user-text">{turn.question}</p>
+                                </div>
+                              </div>
+                              <div className="f04-user-meta">
+                                <span className="f04-timestamp">{turn.timestamp}</span>
+                              </div>
+                            </div>
+
+                            <div className="f06-paragraphs">
+                              <p>{turn.ragData?.answerLead}</p>
+                              <p>{turn.ragData?.answerFollowUp}</p>
+                            </div>
+
+                            <div className="f06-actions-list">
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={() => handleEscalateTurn(turn.id)}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <User size={18} />
+                                    <span>Escalate to Human Expert</span>
                                   </div>
-                                  <span className="f04-conf-badge">
-                                    Confidence: {ragData.confidence}
-                                  </span>
-                                  <Info size={13} className="f04-info-hint" />
-                                </div>
-                                <span className="f04-meta-sub">{ragData.confidenceDetail}</span>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  Get in touch with a qualified healthcare professional.
+                                </span>
                               </div>
 
-                              <div className="f04-meta-divider" />
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={handleViewDocs}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <FileText size={18} />
+                                    <span>View Relevant Documentation</span>
+                                  </div>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  See official safety information from trusted medical sources.
+                                </span>
+                              </div>
 
-                              <button
-                                type="button"
-                                className="f04-meta-sources"
-                                onClick={handleSourcesClick}
-                                aria-label="View sources in sidebar"
-                              >
-                                <div className="f04-sources-header">
-                                  <FileText size={15} className="f04-sources-icon" />
-                                  <span className="f04-sources-title">
-                                    Sources: {ragData.sources.length}
-                                  </span>
-                                  <ArrowRight size={14} className="f04-sources-arrow" />
-                                </div>
-                                <span className="f04-meta-sub">View sources in the sidebar</span>
-                              </button>
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={() => textareaRef.current?.focus()}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <MessageCircle size={18} />
+                                    <span>Ask Another Question</span>
+                                  </div>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  Ask a follow-up question below.
+                                </span>
+                              </div>
                             </div>
+
+                            {turn.isEscalated && (
+                              <div className="f06-escalation-alert">
+                                <CheckCircle2 size={18} color="var(--teal-700)" />
+                                <span>
+                                  Escalation initiated. A qualified clinical pharmacist has been notified.
+                                </span>
+                              </div>
+                            )}
                           </div>
-                        )
-                      )}
-                    </div>
-                  </div>
-                  {answerState === "revealed" && (
-                    <div className="f04-bot-meta">
-                      <span className="f04-timestamp">{timestamp}</span>
-                    </div>
-                  )}
+                        </div>
+                      );
+                    }
+
+                    if (isLowConfidence) {
+                      return (
+                        <div key={turn.id} className="f06-container f07-container" style={{ width: "100%", margin: 0, padding: 0 }}>
+                          <div className="f07-low-conf-card">
+                            <div className="f07-warning-header">
+                              <AlertTriangle size={34} className="f07-warning-icon" />
+                              <div>
+                                <h3 className="f07-warning-title">LOW CONFIDENCE ANSWER</h3>
+                                <p className="f07-warning-sub">
+                                  We're not fully confident about this answer.
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="f06-user-container">
+                              <div className="f04-user-row" style={{ margin: "0 0 2px auto", maxWidth: "100%" }}>
+                                <div className="f04-user-avatar" aria-hidden="true">
+                                  <span>{user.avatarInitial}</span>
+                                </div>
+                                <div className="f04-user-bubble">
+                                  <p className="f04-user-text">{turn.question}</p>
+                                </div>
+                              </div>
+                              <div className="f04-user-meta">
+                                <span className="f04-timestamp">{turn.timestamp}</span>
+                              </div>
+                            </div>
+
+                            <div className="f06-paragraphs">
+                              <p>{turn.ragData?.answerLead}</p>
+                              <p>{turn.ragData?.answerFollowUp}</p>
+                            </div>
+
+                            <div className="f06-actions-list">
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={() => handleEscalateTurn(turn.id)}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <User size={18} />
+                                    <span>Escalate to Human Expert</span>
+                                  </div>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  Get in touch with a qualified healthcare professional.
+                                </span>
+                              </div>
+
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={handleViewDocs}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <FileText size={18} />
+                                    <span>View Related Documentation</span>
+                                  </div>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  See available information from trusted medical sources.
+                                </span>
+                              </div>
+
+                              <div className="f06-action-item">
+                                <button
+                                  type="button"
+                                  className="f06-action-btn"
+                                  onClick={() => textareaRef.current?.focus()}
+                                >
+                                  <div className="f06-action-btn-left">
+                                    <MessageCircle size={18} />
+                                    <span>Try a Different Question</span>
+                                  </div>
+                                  <ArrowRight size={18} />
+                                </button>
+                                <span className="f06-action-subtext">
+                                  Rephrase or ask a more specific question below.
+                                </span>
+                              </div>
+                            </div>
+
+                            {turn.isEscalated && (
+                              <div className="f06-escalation-alert">
+                                <CheckCircle2 size={18} color="var(--teal-700)" />
+                                <span>
+                                  Escalation initiated. A qualified clinical pharmacist has been notified.
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    }
+
+                    // Normal Turn (F-04)
+                    return (
+                      <div key={turn.id} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        {/* User Question */}
+                        <div className="f04-user-row">
+                          <div className="f04-user-avatar" aria-hidden="true">
+                            <span>{user.avatarInitial}</span>
+                          </div>
+                          <div className="f04-user-bubble">
+                            <p className="f04-user-text">{turn.question}</p>
+                          </div>
+                        </div>
+                        <div className="f04-user-meta">
+                          <span className="f04-timestamp">{turn.timestamp}</span>
+                        </div>
+
+                        {/* DrugDoc AI Response */}
+                        <div className="f04-bot-row">
+                          <BotAvatar />
+                          <div className="f04-bot-bubble">
+                            {turn.answerState === "typing" ? (
+                              <div className="f04-typing-wrapper">
+                                <TypingDots />
+                              </div>
+                            ) : (
+                              turn.ragData && (
+                                <div className="f04-answer-content">
+                                  <p className="f04-answer-lead" style={{ whiteSpace: "pre-wrap" }}>
+                                    {turn.ragData.answerLead}
+                                  </p>
+
+                                  {turn.ragData.bulletPoints && turn.ragData.bulletPoints.length > 0 && (
+                                    <ul className="f04-side-effects-list">
+                                      {turn.ragData.bulletPoints.map((bp, idx) => (
+                                        <li key={idx}>
+                                          {bp.label && <strong>{bp.label} </strong>}
+                                          {bp.text}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+
+                                  {turn.ragData.answerFollowUp && (
+                                    <p className="f04-answer-sub">
+                                      {turn.ragData.answerFollowUp}
+                                    </p>
+                                  )}
+
+                                  {/* Embedded Medical Disclaimer */}
+                                  <div className="f04-answer-disclaimer">
+                                    <div className="f04-disclaimer-icon-wrap" aria-hidden="true">
+                                      <Info size={16} />
+                                    </div>
+                                    <p className="f04-disclaimer-text">{turn.ragData.disclaimer}</p>
+                                  </div>
+
+                                  {/* Answer Metadata Bar */}
+                                  <div className="f04-meta-bar">
+                                    <div className="f04-meta-confidence">
+                                      <div className="f04-confidence-header">
+                                        <div className="f04-conf-icon" aria-hidden="true">
+                                          <BarChart2 size={16} />
+                                        </div>
+                                        <span className="f04-conf-badge">
+                                          Confidence: {turn.ragData.confidence}
+                                        </span>
+                                        <Info size={13} className="f04-info-hint" />
+                                      </div>
+                                      <span className="f04-meta-sub">{turn.ragData.confidenceDetail}</span>
+                                    </div>
+
+                                    <div className="f04-meta-divider" />
+
+                                    <button
+                                      type="button"
+                                      className="f04-meta-sources"
+                                      onClick={handleSourcesClick}
+                                      aria-label="View sources in sidebar"
+                                    >
+                                      <div className="f04-sources-header">
+                                        <FileText size={15} className="f04-sources-icon" />
+                                        <span className="f04-sources-title">
+                                          Sources: {turn.ragData.sources.length}
+                                        </span>
+                                        <ArrowRight size={14} className="f04-sources-arrow" />
+                                      </div>
+                                      <span className="f04-meta-sub">View sources in the sidebar</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+                        {turn.answerState === "revealed" && (
+                          <div className="f04-bot-meta">
+                            <span className="f04-timestamp">{turn.timestamp}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  <div ref={chatEndRef} />
                 </div>
 
-                {/* Input area for F-04 */}
-                <div className="f03-input-wrapper f04-input-container">
+                {/* Non-blocking Rollover prompt banner */}
+                {nearLimit && (
+                  <div
+                    style={{
+                      marginTop: "16px",
+                      marginBottom: "8px",
+                      padding: "12px 16px",
+                      borderRadius: "8px",
+                      background: "rgba(245, 158, 11, 0.1)",
+                      border: "1px solid rgba(245, 158, 11, 0.3)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "14px", color: "#92400e" }}>
+                      <AlertTriangle size={18} />
+                      <span>This chat session is near its memory limit. Continue in a new session with retained summary?</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleRollover}
+                      disabled={isRollingOver}
+                      style={{
+                        padding: "6px 14px",
+                        borderRadius: "6px",
+                        background: "var(--teal-700, #0d9488)",
+                        color: "#fff",
+                        border: "none",
+                        fontWeight: 600,
+                        fontSize: "13px",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {isRollingOver ? "Rolling over..." : "Continue in New Session"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Rollover confirmation notification */}
+                {rolloverNotice && (
+                  <div
+                    style={{
+                      marginTop: "16px",
+                      marginBottom: "8px",
+                      padding: "10px 14px",
+                      borderRadius: "8px",
+                      background: "rgba(16, 185, 129, 0.1)",
+                      border: "1px solid rgba(16, 185, 129, 0.3)",
+                      color: "#065f46",
+                      fontSize: "13px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                    }}
+                  >
+                    <CheckCircle2 size={16} />
+                    <span>{rolloverNotice}</span>
+                  </div>
+                )}
+
+                {/* Input area for continuous chat stream */}
+                <div className="f03-input-wrapper f04-input-container" style={{ marginTop: "16px" }}>
                   <textarea
                     ref={textareaRef}
                     className="f03-textarea"
-                    placeholder="Type your question here..."
+                    placeholder="Ask a follow-up question..."
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
                     onKeyDown={handleKeyDown}
@@ -770,14 +851,14 @@ export const AskQuestion: React.FC = () => {
                 <p className="f03-input-hint">
                   Press Enter to send&nbsp;&nbsp;•&nbsp;&nbsp;Shift + Enter for a new line
                 </p>
-              </>
+              </div>
             )}
           </div>
         </div>
 
         {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
         <div className="f03-right-col">
-          {activeQuestion && !isFetching && (
+          {turns.length > 0 && (
             <>
               {/* About [Medication] */}
               <div className="f03-info-card">
@@ -831,8 +912,9 @@ export const AskQuestion: React.FC = () => {
               {/* Sources */}
               <div
                 ref={sourcesCardRef}
-                className={`f03-info-card f04-sources-card ${highlightSources ? "f04-sources-card--highlight" : ""
-                  }`}
+                className={`f03-info-card f04-sources-card ${
+                  highlightSources ? "f04-sources-card--highlight" : ""
+                }`}
               >
                 <div className="f03-info-card-header">
                   <div
@@ -852,7 +934,7 @@ export const AskQuestion: React.FC = () => {
                 </p>
 
                 <div className="f04-sources-list">
-                  {ragData?.sources.map((src) => (
+                  {activeSources.map((src) => (
                     <div key={src.id} className="f04-source-item">
                       <span className="f04-source-number">{src.id}</span>
 
@@ -892,7 +974,7 @@ export const AskQuestion: React.FC = () => {
           )}
 
           {/* Tip */}
-          {!activeQuestion && (
+          {turns.length === 0 && (
             <div className="f03-info-card">
               <div className="f03-info-card-header">
                 <div
@@ -922,6 +1004,3 @@ export const AskQuestion: React.FC = () => {
     </AppLayout>
   );
 };
-
-
-
