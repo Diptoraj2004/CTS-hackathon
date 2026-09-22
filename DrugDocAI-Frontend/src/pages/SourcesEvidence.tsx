@@ -129,7 +129,7 @@ export const SourcesEvidence: React.FC = () => {
               <div className="f03-sel-drug-info">
                 <span className="f03-sel-label">Selected Medication</span>
                 <span className="f03-sel-drug-name">{drug}</span>
-                <span className="f03-sel-drug-desc">Broad-spectrum antibiotic</span>
+                <span className="f03-sel-drug-desc">Selected medication</span>
               </div>
             </div>
 
