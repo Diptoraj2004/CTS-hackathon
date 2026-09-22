@@ -2,6 +2,7 @@
 redaction.py, auth.py module docstrings for the reasoning behind each piece."""
 import os
 import json
+import mimetypes
 import secrets
 import urllib.parse
 import urllib.request
@@ -445,24 +446,45 @@ def download_document(filename: str, request: Request):
         },
     )
     
-@app.get("/documents/{filename}/view", dependencies=[Depends(require_admin_key)])
-def view_document(filename: str):
+@app.get("/documents/{filename}/view")
+def view_document(filename: str, request: Request, download: bool = False):
     safe_filename = os.path.basename(filename)
     file_path = (UPLOAD_DIR / safe_filename).resolve()
     if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
-        audit_log.log("UNAUTHORIZED_FILE_ACCESS", f"attempted_file={safe_filename}", status="BLOCKED")
+        audit_log.log(
+            "UNAUTHORIZED_FILE_ACCESS",
+            f"attempted_file={safe_filename}",
+            ip=_client_ip(request),
+            status="BLOCKED",
+        )
         raise HTTPException(status_code=403, detail="Access denied.")
     if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="Document not found.")
+        # Fallback: check if the file exists with a job prefix (e.g. {job_id[:8]}_{filename})
+        candidates = list(UPLOAD_DIR.glob(f"*_{safe_filename}"))
+        if candidates and candidates[0].is_file():
+            file_path = candidates[0]
+        else:
+            raise HTTPException(status_code=404, detail="Document not found.")
 
-    ext = safe_filename.rsplit(".", 1)[-1].lower() if "." in safe_filename else ""
-    media_type = {"pdf": "application/pdf", "xml": "application/xml"}.get(ext)
+    media_type, _ = mimetypes.guess_type(str(file_path))
     if not media_type:
-        raise HTTPException(status_code=400, detail="Preview for this file type is not supported.")
+        media_type = "application/octet-stream"
 
-    audit_log.log("DOCUMENT_VIEWED", f"filename={safe_filename}", resource=f"document:{safe_filename}")
-    return FileResponse(path=file_path, media_type=media_type,
-                        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'})
+    disposition = "attachment" if download else "inline"
+    action = "DOCUMENT_DOWNLOADED" if download else "DOCUMENT_VIEWED"
+
+    audit_log.log(
+        action,
+        f"filename={safe_filename}",
+        ip=_client_ip(request),
+        resource=f"document:{safe_filename}",
+        status="SUCCESS",
+    )
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_filename}"'},
+    )
 
 
 @app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])
