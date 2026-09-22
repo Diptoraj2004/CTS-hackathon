@@ -465,23 +465,6 @@ export const MedicationInfo: React.FC = () => {
               View all sources <ArrowRight size={13} />
             </button>
           </div>
-
-          {/* Card 3: Important Notice */}
-          <div className="f03-info-card f03-info-card--tinted">
-            <div className="f03-info-card-header">
-              <AlertTriangle size={18} className="f03-warning-icon" />
-              <h4 className="f03-info-card-title" style={{ color: "#8f3a28" }}>
-                Important
-              </h4>
-            </div>
-            <p className="f03-info-card-body" style={{ color: "#6b433b", margin: "8px 0 12px" }}>
-              This tool provides information from official medical sources and is not a substitute for
-              professional medical advice.
-            </p>
-            <button className="f03-info-link" type="button" style={{ color: "#8f3a28" }}>
-              Learn more <ArrowRight size={13} />
-            </button>
-          </div>
         </div>
       </section>
 

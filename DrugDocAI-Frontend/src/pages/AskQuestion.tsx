@@ -63,7 +63,7 @@ export const AskQuestion: React.FC = () => {
   const { user } = useCurrentUser();
 
   const drug = searchParams.get("drug") || "Amoxicillin";
-  const mode = (searchParams.get("mode") || user?.role === "doctor" ? "professional" : "patient") as "patient" | "professional";
+  const mode = (searchParams.get("mode") || (user?.role === "doctor" ? "professional" : "patient")) as "patient" | "professional";
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
 
@@ -786,7 +786,7 @@ export const AskQuestion: React.FC = () => {
         <div className="f03-right-col">
           {activeQuestion && !isFetching && (
             <>
-              {/* Card 1: About [Medication] (Present on F-03, F-04 & F-06) */}
+              {/* About [Medication] */}
               <div className="f03-info-card">
                 <div className="f03-info-card-header">
                   <div className="guidance-icon-badge">
@@ -794,13 +794,19 @@ export const AskQuestion: React.FC = () => {
                   </div>
                   <h4 className="f03-info-card-title">About {drug}</h4>
                 </div>
-                <p className="f03-info-card-sub">Quick facts from official sources.</p>
+
+                <p className="f03-info-card-sub">
+                  Quick facts from official sources.
+                </p>
 
                 <div className="f03-drug-facts">
                   <div className="f03-fact-row">
                     <span className="f03-fact-label">Drug class</span>
-                    <span className="f03-fact-value">{drugProfile?.class || NO_INFO}</span>
+                    <span className="f03-fact-value">
+                      {drugProfile?.class || NO_INFO}
+                    </span>
                   </div>
+
                   <div className="f03-fact-row">
                     <span className="f03-fact-label">Available as</span>
                     <span className="f03-fact-value">
@@ -809,6 +815,7 @@ export const AskQuestion: React.FC = () => {
                         : NO_INFO}
                     </span>
                   </div>
+
                   <div className="f03-fact-row">
                     <span className="f03-fact-label">Common brands</span>
                     <span className="f03-fact-value">{NO_INFO}</span>
@@ -819,119 +826,105 @@ export const AskQuestion: React.FC = () => {
                   className="f03-info-link"
                   type="button"
                   onClick={() =>
-                    navigate(`/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`)
+                    navigate(
+                      `/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                    )
                   }
                 >
                   View full drug information <ArrowRight size={13} />
                 </button>
               </div>
+
+              {/* Sources */}
+              <div
+                ref={sourcesCardRef}
+                className={`f03-info-card f04-sources-card ${highlightSources ? "f04-sources-card--highlight" : ""
+                  }`}
+              >
+                <div className="f03-info-card-header">
+                  <div
+                    className="guidance-icon-badge"
+                    style={{
+                      background: "rgba(30,138,142,0.12)",
+                      color: "var(--teal-700)",
+                    }}
+                  >
+                    <Link2 size={15} />
+                  </div>
+                  <h4 className="f03-info-card-title">Sources</h4>
+                </div>
+
+                <p className="f03-info-card-sub">
+                  Information from trusted medical sources.
+                </p>
+
+                <div className="f04-sources-list">
+                  {ragData?.sources.map((src) => (
+                    <div key={src.id} className="f04-source-item">
+                      <span className="f04-source-number">{src.id}</span>
+
+                      <div className="f04-source-details">
+                        <strong className="f04-source-name">{src.name}</strong>
+
+                        <button
+                          className="f04-source-link"
+                          type="button"
+                          onClick={() =>
+                            navigate(
+                              `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                            )
+                          }
+                        >
+                          Access data <ArrowRight size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button
+                  className="f03-info-link"
+                  type="button"
+                  style={{ marginTop: "12px" }}
+                  onClick={() =>
+                    navigate(
+                      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                    )
+                  }
+                >
+                  View all sources <ArrowRight size={13} />
+                </button>
+              </div>
             </>
           )}
 
-          {/* Card 2:
-              - In F-03 (no question yet): Important Card
-              - In F-04 & F-06: Sources Card
-          */}
-          {!activeQuestion ? (
-            /* F-03 Middle Card: Important notice */
-            <div className="f03-info-card f03-info-card--tinted">
-              <div className="f03-info-card-header">
-                <div className="guidance-icon-badge guidance-icon-info">
-                  <ShieldCheck size={15} />
-                </div>
-                <h4 className="f03-info-card-title">Important</h4>
-              </div>
-              <p className="f03-info-card-body">
-                This tool provides information from official medical sources and is not a substitute for professional medical advice.
-              </p>
-              <button className="f03-info-link" type="button">
-                Learn more <ArrowRight size={13} />
-              </button>
-            </div>
-          ) : (
-            /* F-04 & F-06 Middle Card: Sources Card */
-            <div
-              ref={sourcesCardRef}
-              className={`f03-info-card f04-sources-card ${highlightSources ? "f04-sources-card--highlight" : ""}`}
-            >
-              <div className="f03-info-card-header">
-                <div className="guidance-icon-badge" style={{ background: "rgba(30,138,142,0.12)", color: "var(--teal-700)" }}>
-                  <Link2 size={15} />
-                </div>
-                <h4 className="f03-info-card-title">Sources</h4>
-              </div>
-              <p className="f03-info-card-sub">Information from trusted medical sources.</p>
-
-              <div className="f04-sources-list">
-                {ragData?.sources.map((src) => (
-                  <div key={src.id} className="f04-source-item">
-                    <span className="f04-source-number">{src.id}</span>
-                    <div className="f04-source-details">
-                      <strong className="f04-source-name">{src.name}</strong>
-                      <button
-                        className="f04-source-link"
-                        type="button"
-                        onClick={() => navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`)}
-                      >
-                        Access data <ArrowRight size={12} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                className="f03-info-link"
-                type="button"
-                style={{ marginTop: "12px" }}
-                onClick={() => navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`)}
-              >
-                View all sources <ArrowRight size={13} />
-              </button>
-            </div>
-          )}
-
-          {/* Card 3:
-              - In F-03: Tip Card
-              - In F-04 & F-06: Important Card (Exact tinted notice)
-          */}
-          {!activeQuestion ? (
-            /* F-03 Bottom Card: Tip */
+          {/* Tip */}
+          {!activeQuestion && (
             <div className="f03-info-card">
               <div className="f03-info-card-header">
-                <div className="guidance-icon-badge" style={{ background: "rgba(217,127,108,0.12)", color: "var(--clay-dark)" }}>
+                <div
+                  className="guidance-icon-badge"
+                  style={{
+                    background: "rgba(217,127,108,0.12)",
+                    color: "var(--clay-dark)",
+                  }}
+                >
                   <Lightbulb size={15} />
                 </div>
                 <h4 className="f03-info-card-title">Tip</h4>
               </div>
+
               <p className="f03-info-card-body">
                 Be specific in your questions to get more relevant answers.
               </p>
             </div>
-          ) : (
-            /* F-04 & F-06 Bottom Card: Important Notice */
-            <div className="f03-info-card f03-info-card--tinted">
-              <div className="f03-info-card-header">
-                <div className="guidance-icon-badge" style={{ background: "rgba(217,113,92,0.14)", color: "var(--clay-dark)" }}>
-                  <AlertTriangle size={15} />
-                </div>
-                <h4 className="f03-info-card-title" style={{ color: "var(--clay-dark)" }}>Important</h4>
-              </div>
-              <p className="f03-info-card-body">
-                This tool provides information from official medical sources and is not a substitute for professional medical advice.
-              </p>
-              <button className="f03-info-link" type="button">
-                Learn more <ArrowRight size={13} />
-              </button>
-            </div>
           )}
         </div>
-      </section>
 
-      {/* Minimal footer: copyright only */}
-      <footer className="f03-footer">
-        <span>© 2026 DrugDoc AI</span>
-      </footer>
+        {/* Minimal footer: copyright only */}
+        <footer className="f03-footer">
+          <span>© 2026 DrugDoc AI</span>
+        </footer>
     </AppLayout>
   );
 };
