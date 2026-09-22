@@ -21,21 +21,9 @@ import {
 } from "lucide-react";
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
-import { getRagResponse, RagResponse } from "../data/ragService";
+import { getRagResponse, RagResponse, getDrugProfile, DrugProfileResponse } from "../data/ragService";
 
-// ── Drug metadata ─────────────────────────────────────────────────────────────
-// No hardcoded medical facts. All fields show a safe empty-state message
-// unless verified structured data is available from the knowledge base.
 const NO_INFO = "No verified information available in the current knowledge base.";
-
-function getDrugMeta(_drug: string) {
-  return {
-    drugClass: NO_INFO,
-    availableAs: NO_INFO,
-    commonBrands: NO_INFO,
-    description: NO_INFO,
-  };
-}
 
 function buildSuggestedQuestions(drug: string): string[] {
   return [
@@ -75,7 +63,22 @@ export const AskQuestion: React.FC = () => {
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") || "professional") as "patient" | "professional";
 
-  const meta = getDrugMeta(drug);
+  const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    getDrugProfile(drug)
+      .then((data) => {
+        if (!cancelled) setDrugProfile(data);
+      })
+      .catch(() => {
+        if (!cancelled) setDrugProfile(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drug]);
+
   const suggestedQuestions = buildSuggestedQuestions(drug);
 
   // Active question is transient UI state (resets to null on browser refresh)
@@ -316,7 +319,7 @@ export const AskQuestion: React.FC = () => {
                 <div className="f03-sel-drug-info">
                   <span className="f03-sel-label">Selected Medication</span>
                   <span className="f03-sel-drug-name">{drug}</span>
-                  <span className="f03-sel-drug-desc">{meta.description}</span>
+                  <span className="f03-sel-drug-desc">Selected medication</span>
                 </div>
               </div>
 
@@ -792,15 +795,19 @@ export const AskQuestion: React.FC = () => {
             <div className="f03-drug-facts">
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Drug class</span>
-                <span className="f03-fact-value">{meta.drugClass}</span>
+                <span className="f03-fact-value">{drugProfile?.class || NO_INFO}</span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Available as</span>
-                <span className="f03-fact-value">{meta.availableAs}</span>
+                <span className="f03-fact-value">
+                  {drugProfile?.forms && drugProfile.forms.length > 0
+                    ? drugProfile.forms.join(", ")
+                    : NO_INFO}
+                </span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Common brands</span>
-                <span className="f03-fact-value">{meta.commonBrands}</span>
+                <span className="f03-fact-value">{NO_INFO}</span>
               </div>
             </div>
 

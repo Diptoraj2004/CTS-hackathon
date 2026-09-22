@@ -289,3 +289,29 @@ export async function getRagResponse(
     requestId: null,
   };
 }
+
+export interface DrugProfileResponse {
+  drug: string;
+  class?: string;
+  uses?: string[];
+  forms?: string[];
+  dosage?: string[];
+  sideEffects?: string[];
+  interactions?: string[];
+  warnings?: string[];
+}
+
+export async function getDrugProfile(drug: string): Promise<DrugProfileResponse | null> {
+  if (!drug || !drug.trim()) return null;
+  try {
+    const res = await fetch(`${API_BASE}/api/drug-profile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drug: drug.trim() }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}

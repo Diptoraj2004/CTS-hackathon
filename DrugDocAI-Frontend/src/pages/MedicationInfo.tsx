@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
@@ -20,8 +20,7 @@ import {
 import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
-import { getMedicationInfo, MedicationInfoDetails } from "../data/medicationInfoData";
-import { loadRagSources, RagSource } from "../data/ragService";
+import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
 
 export const MedicationInfo: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -30,8 +29,27 @@ export const MedicationInfo: React.FC = () => {
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") as "patient" | "professional") || "professional";
 
-  const medInfo: MedicationInfoDetails | null = getMedicationInfo(drug);
+  const [profile, setProfile] = useState<DrugProfileResponse | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const ragSources: RagSource[] | null = loadRagSources(drug, mode);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    getDrugProfile(drug)
+      .then((data) => {
+        if (!cancelled) setProfile(data);
+      })
+      .catch(() => {
+        if (!cancelled) setProfile(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [drug]);
 
   const [activeTab, setActiveTab] = useState<string>("overview");
 
@@ -147,7 +165,7 @@ export const MedicationInfo: React.FC = () => {
                 <span className="mi-label">MEDICATION</span>
                 <h1 className="mi-drug-title">{drug}</h1>
                 <span className="mi-drug-sub">
-                  {medInfo?.description || "No verified information available in the current knowledge base."}
+                  No verified information available in the current knowledge base.
                 </span>
               </div>
             </div>
@@ -159,7 +177,7 @@ export const MedicationInfo: React.FC = () => {
               <div className="mi-class-info">
                 <span className="mi-class-label">Drug class</span>
                 <span className="mi-class-value">
-                  {medInfo?.drugClass || "No verified information available in the current knowledge base."}
+                  {profile?.class || "No verified information available in the current knowledge base."}
                 </span>
               </div>
             </div>
@@ -204,7 +222,7 @@ export const MedicationInfo: React.FC = () => {
                 <h2 className="mi-card-title">Drug Overview</h2>
               </div>
               <p className="mi-card-body">
-                {medInfo?.overview || "No verified information available in the current knowledge base."}
+                No verified information available in the current knowledge base.
               </p>
             </article>
 
@@ -216,9 +234,9 @@ export const MedicationInfo: React.FC = () => {
                   <CheckCircle2 size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Uses</h2>
                 </div>
-                {medInfo?.uses && medInfo.uses.length > 0 ? (
+                {profile?.uses && profile.uses.length > 0 ? (
                   <ul className="mi-bullet-list">
-                    {medInfo.uses.map((item, idx) => (
+                    {profile.uses.map((item, idx) => (
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
@@ -235,20 +253,12 @@ export const MedicationInfo: React.FC = () => {
                   <Package size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Available Forms</h2>
                 </div>
-                {medInfo?.availableForms && medInfo.availableForms.length > 0 ? (
-                  <>
-                    <ul className="mi-bullet-list">
-                      {medInfo.availableForms.map((item, idx) => (
-                        <li key={idx}>{item}</li>
-                      ))}
-                    </ul>
-                    {medInfo.formsNote && (
-                      <div className="mi-notice-box">
-                        <Info size={14} className="mi-notice-icon" />
-                        <span>{medInfo.formsNote}</span>
-                      </div>
-                    )}
-                  </>
+                {profile?.forms && profile.forms.length > 0 ? (
+                  <ul className="mi-bullet-list">
+                    {profile.forms.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
                     No verified information available in the current knowledge base.
@@ -263,9 +273,9 @@ export const MedicationInfo: React.FC = () => {
                 <FileCheck size={18} className="mi-card-icon" />
                 <h2 className="mi-card-title">Dosage Information</h2>
               </div>
-              {medInfo?.dosageInformation && medInfo.dosageInformation.length > 0 ? (
+              {profile?.dosage && profile.dosage.length > 0 ? (
                 <div className="mi-card-body-stack">
-                  {medInfo.dosageInformation.map((paragraph, idx) => (
+                  {profile.dosage.map((paragraph, idx) => (
                     <p key={idx} className="mi-card-body">
                       {paragraph}
                     </p>
@@ -286,20 +296,12 @@ export const MedicationInfo: React.FC = () => {
                   <AlertTriangle size={18} className="mi-card-icon mi-card-icon--orange" />
                   <h2 className="mi-card-title">Common Side Effects</h2>
                 </div>
-                {medInfo?.commonSideEffects && medInfo.commonSideEffects.length > 0 ? (
-                  <>
-                    <ul className="mi-bullet-list">
-                      {medInfo.commonSideEffects.map((item, idx) => (
-                        <li key={idx}>{item}</li>
-                      ))}
-                    </ul>
-                    {medInfo.sideEffectsNote && (
-                      <div className="mi-notice-box">
-                        <Info size={14} className="mi-notice-icon" />
-                        <span>{medInfo.sideEffectsNote}</span>
-                      </div>
-                    )}
-                  </>
+                {profile?.sideEffects && profile.sideEffects.length > 0 ? (
+                  <ul className="mi-bullet-list">
+                    {profile.sideEffects.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
                     No verified information available in the current knowledge base.
@@ -313,20 +315,12 @@ export const MedicationInfo: React.FC = () => {
                   <LinkIcon size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Interactions</h2>
                 </div>
-                {medInfo?.interactions && medInfo.interactions.length > 0 ? (
-                  <>
-                    <ul className="mi-bullet-list">
-                      {medInfo.interactions.map((item, idx) => (
-                        <li key={idx}>{item}</li>
-                      ))}
-                    </ul>
-                    {medInfo.interactionsNote && (
-                      <div className="mi-notice-box">
-                        <Info size={14} className="mi-notice-icon" />
-                        <span>{medInfo.interactionsNote}</span>
-                      </div>
-                    )}
-                  </>
+                {profile?.interactions && profile.interactions.length > 0 ? (
+                  <ul className="mi-bullet-list">
+                    {profile.interactions.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
                 ) : (
                   <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
                     No verified information available in the current knowledge base.
@@ -341,9 +335,9 @@ export const MedicationInfo: React.FC = () => {
                 <ShieldAlert size={18} className="mi-card-icon mi-card-icon--teal" />
                 <h2 className="mi-card-title">Warnings &amp; Precautions</h2>
               </div>
-              {medInfo?.warnings && medInfo.warnings.length > 0 ? (
+              {profile?.warnings && profile.warnings.length > 0 ? (
                 <ul className="mi-bullet-list">
-                  {medInfo.warnings.map((item, idx) => (
+                  {profile.warnings.map((item, idx) => (
                     <li key={idx}>{item}</li>
                   ))}
                 </ul>
@@ -390,14 +384,14 @@ export const MedicationInfo: React.FC = () => {
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Drug class</span>
                 <span className="f03-fact-value">
-                  {medInfo?.drugClass || "No verified information available in the current knowledge base."}
+                  {profile?.class || "No verified information available in the current knowledge base."}
                 </span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Available as</span>
                 <span className="f03-fact-value">
-                  {medInfo?.availableForms && medInfo.availableForms.length > 0
-                    ? medInfo.availableForms.join(", ")
+                  {profile?.forms && profile.forms.length > 0
+                    ? profile.forms.join(", ")
                     : "No verified information available in the current knowledge base."}
                 </span>
               </div>
