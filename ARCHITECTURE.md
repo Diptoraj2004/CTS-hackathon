@@ -77,3 +77,11 @@ GET /ingest/{job_id}/status — poll for progress (exempt from rate limiting)
 ## 6. Known open gaps
 
 Two LanceDB wrapper implementations still coexist (one unused for the live path). PDF section/version/date extraction is still heuristic, not fully reliable on arbitrary layouts. No confidence-bucket calibration against real reviewed data yet (thresholds are a documented placeholder — see `confidence.py`). Frontend dashboard's historical activity chart and source-type breakdown are still static — no backend history tracking for those specific views yet (`/dashboard/stats` covers live counts only). No dependency version pinning across all requirements files. SQLite-backed state (auth, sessions, rate limits) lives under `data/`, which is wiped on a fresh Colab instance unless that directory is persisted elsewhere.
+
+## Intent-Orchestrated Retrieval (September 2026)
+
+The query path now starts with a lightweight intent classifier before vector retrieval. This avoids unnecessary retrieval for history-only questions and selects FAERS for frequency/report-count queries:
+
+`query -> intent router -> history / label retrieval / FAERS -> generation -> citation validation -> quality metrics`
+
+The API exposes `intent`, `retrieval_used`, `history_used`, `faers_used`, and `quality_metrics` on each response. Live quality metrics are explicitly estimates; the gold-set evaluator remains authoritative for benchmark reporting.

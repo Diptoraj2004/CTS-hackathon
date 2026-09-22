@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from typing import Any
 
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
@@ -57,6 +58,13 @@ def _session_connection() -> sqlite3.Connection:
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         additional_json TEXT NOT NULL DEFAULT '{}'
+    )""")
+    connection.execute("""CREATE TABLE IF NOT EXISTS response_cache (
+        session_id TEXT NOT NULL,
+        normalized_query TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        PRIMARY KEY(session_id, normalized_query)
     )""")
     for statement in (
         "ALTER TABLE chat_sessions ADD COLUMN summary TEXT",
@@ -184,6 +192,7 @@ def forget(session_id: str) -> bool:
         connection = _session_connection()
         existed = connection.execute("SELECT 1 FROM chat_sessions WHERE session_id = ?", (session_id,)).fetchone() is not None
         connection.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM response_cache WHERE session_id = ?", (session_id,))
         connection.execute("DELETE FROM chat_sessions WHERE session_id = ?", (session_id,))
         connection.commit()
         connection.close()
@@ -288,6 +297,51 @@ def understand(query: str, mode: Mode, session_id: str = "default",
     return QueryInfo(original_query=query, standalone_query=standalone,
                      drug_names=drugs, section_hints=sections, mode=mode,
                      conversation_summary=summary)
+
+
+def _normalize_query(query: str) -> str:
+    return re.sub(r"\s+", " ", query.strip().lower())
+
+
+def get_cached_response(session_id: str, query: str) -> dict[str, Any] | None:
+    connection = _session_connection()
+    row = connection.execute(
+        "SELECT response_json FROM response_cache WHERE session_id = ? AND normalized_query = ?",
+        (session_id, _normalize_query(query)),
+    ).fetchone()
+    connection.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row["response_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def cache_response(session_id: str, query: str, response: dict[str, Any]) -> None:
+    connection = _session_connection()
+    connection.execute(
+        "INSERT INTO response_cache(session_id, normalized_query, response_json, created_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(session_id, normalized_query) DO UPDATE SET response_json=excluded.response_json, created_at=excluded.created_at",
+        (session_id, _normalize_query(query), json.dumps(response), time.time()),
+    )
+    connection.commit()
+    connection.close()
+
+
+def get_last_cached_response(session_id: str) -> dict[str, Any] | None:
+    connection = _session_connection()
+    row = connection.execute(
+        "SELECT response_json FROM response_cache WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    connection.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row["response_json"])
+    except (TypeError, json.JSONDecodeError):
+        return None
 
 
 def remember_answer(session_id: str, answer: str) -> None:

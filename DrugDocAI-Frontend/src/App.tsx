@@ -13,9 +13,7 @@ import { AdminDashboard } from "./pages/admin/AdminDashboard";
 import { DocumentLibrary } from "./pages/admin/DocumentLibrary";
 import { UploadProcessing } from "./pages/admin/UploadProcessing";
 import { AuditLogs } from "./pages/admin/AuditLogs";
-import { Privacy } from "./pages/Privacy";
-import { Terms } from "./pages/Terms";
-import { Support } from "./pages/Support";
+
 import { HumanSupport } from "./pages/admin/HumanSupport";
 
 function App() {
@@ -30,9 +28,6 @@ function App() {
       <Route path="/medication-info" element={<MedicationInfo />} />
       <Route path="/docs" element={<Documentation />} />
       <Route path="/profile" element={<ProfilePlaceholder />} />
-      <Route path="/privacy" element={<Privacy />} />
-      <Route path="/terms" element={<Terms />} />
-      <Route path="/support" element={<Support />} />
 
       {/* ── Admin flow — every route requires a validated admin key ── */}
       <Route path="/admin" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />

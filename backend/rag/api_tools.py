@@ -38,8 +38,10 @@ def fetch_faers_adverse_events(drug_name: str, timeout: float = 8.0) -> FAERSRes
             for item in payload.get("results", [])
             if item.get("term")
         ]
-        total = sum(item["count"] for item in reactions)
-        return FAERSResult(drug=drug, reactions=reactions, total_reports=total, url=url)
+        # The count endpoint returns reaction-event occurrences, not unique FAERS
+        # reports. Summing reactions would over-count reports containing multiple
+        # adverse events, so keep this field unset rather than mislabeling it.
+        return FAERSResult(drug=drug, reactions=reactions, total_reports=None, url=url)
     except (requests.RequestException, ValueError, TypeError) as exc:
         return FAERSResult(drug=drug, reactions=[], total_reports=None, url=url, error=str(exc))
 

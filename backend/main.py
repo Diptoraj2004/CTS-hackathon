@@ -50,7 +50,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.middleware("http")
 async def prompt_injection_middleware(request: Request, call_next):
     """Reject direct prompt injection before query handlers can retrieve or generate."""
-    if request.method == "POST" and request.url.path in {"/query", "/api/drug-profile"}:
+    if request.method == "POST" and request.url.path in {"/api/drug-profile"}:
         try:
             payload = json.loads(await request.body())
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -223,9 +223,8 @@ def google_auth_callback(code: str | None = None, state: str | None = None,
 
 def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None,
               answer: str = "") -> ChatbotResponse:
-    if risk_level == "none":
-        # Off-topic (not drug-related), not a safety matter — don't clutter
-        # the human review queue with "what's the weather" style questions.
+    if risk_level == "none" or reason in {"PROMPT_INJECTION", "CORPUS_INJECTION"} or reason.startswith("PROMPT_INJECTION"):
+        # Off-topic and prompt-injection blocks are not medical review cases.
         return ChatbotResponse(mode=mode, answer=answer, status="ESCALATED",
                                reason=reason, risk_level=risk_level, request_id=None)
     result = review_queue.flag(query, mode, reason)
@@ -239,10 +238,24 @@ def process_query(req: QueryRequest, request: Request):
 
     if injection_guard.looks_like_injection(req.query):
         audit_log.log("INJECTION_BLOCKED", req.query[:200], ip=ip, status="BLOCKED")
-        raise HTTPException(
-            status_code=400,
-            detail="This query appears to contain an embedded instruction rather than a genuine "
-                  "question, which violates usage policy — it wasn't processed.",
+        record_query("ESCALATED")
+        # Injection is a policy block, not a medical escalation. It must not
+        # produce the same doctor/pharmacist advice or enter the human medical
+        # review queue. Return the same structured contract as normal answers.
+        return ChatbotResponse(
+            mode=req.mode,
+            answer="This request was blocked because it contains instructions that attempt to alter the assistant's operating rules. Please submit a medication question instead.",
+            status="ESCALATED",
+            reason="PROMPT_INJECTION",
+            risk_level="high",
+            confidence=0.0,
+            confidence_bucket="low",
+            intent="PROMPT_INJECTION",
+            intent_confidence=1.0,
+            retrieval_used=False,
+            history_used=False,
+            faers_used=False,
+            request_id=None,
         )
 
     needs_review, reason = check_mode_consistency(req.query, req.mode)
@@ -258,8 +271,14 @@ def process_query(req: QueryRequest, request: Request):
 
     if result.status == "ESCALATED":
         record_query(result.status)
-        return _escalate(req.query, req.mode, result.reason or "insufficient evidence",
-                         risk_level=result.risk_level or "low", ip=ip, answer=result.answer)
+        return ChatbotResponse(
+            mode=req.mode, answer=result.answer, citations=result.citations, status=result.status,
+            confidence=result.confidence, confidence_bucket=result.confidence_bucket,
+            reason=result.reason, risk_level=result.risk_level, request_id=None,
+            intent=result.intent, intent_confidence=result.intent_confidence,
+            retrieval_used=result.retrieval_used, history_used=result.history_used,
+            faers_used=result.faers_used, quality_metrics=result.quality_metrics,
+        )
 
     audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip, status="SUCCESS")
     record_query(result.status)
@@ -267,7 +286,10 @@ def process_query(req: QueryRequest, request: Request):
                            status=result.status, confidence=result.confidence,
                            confidence_bucket=result.confidence_bucket,
                            reason=result.reason, risk_level=result.risk_level,
-                           request_id=None)
+                           request_id=None, intent=result.intent,
+                           intent_confidence=result.intent_confidence,
+                           retrieval_used=result.retrieval_used, history_used=result.history_used,
+                           faers_used=result.faers_used, quality_metrics=result.quality_metrics)
 
 
 @app.post("/api/drug-profile", response_model=DrugProfile)

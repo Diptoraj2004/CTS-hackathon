@@ -15,7 +15,6 @@ import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import { mockAuth } from "../auth/mockAuth";
 import { setAuthToken } from "../auth/adminApi";
-import { Footer } from "../components/Footer";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -348,11 +347,11 @@ export const Login: React.FC = () => {
                     />
                     <span>
                       I agree to the{" "}
-                      <a href="/terms" className="terms-link">
-                        Terms
+                      <a href="#terms" onClick={(e) => e.preventDefault()} className="terms-link">
+                        Terms of Service
                       </a>{" "}
                       and{" "}
-                      <a href="/privacy" className="terms-link">
+                      <a href="#privacy" onClick={(e) => e.preventDefault()} className="terms-link">
                         Privacy Policy
                       </a>
                     </span>
@@ -617,7 +616,20 @@ export const Login: React.FC = () => {
           </div>
         </div>
       </section>
-      <Footer />
+
+      {/* MINIMAL FOOTER FOR LOGIN PAGE: © 2026 DrugDoc AI */}
+      <footer className="login-footer">
+        <div className="container footer-content-minimal justify-between" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+          <span>© 2026 DrugDoc AI</span>
+          <div className="footer-links" style={{ gap: '16px' }}>
+            <a href="#privacy" onClick={(e) => e.preventDefault()} style={{ color: 'var(--slate)', fontSize: '12px' }}>Privacy</a>
+            <span style={{ color: 'var(--slate)', opacity: 0.4 }}>|</span>
+            <a href="#terms" onClick={(e) => e.preventDefault()} style={{ color: 'var(--slate)', fontSize: '12px' }}>Terms</a>
+            <span style={{ color: 'var(--slate)', opacity: 0.4 }}>|</span>
+            <a href="#support" onClick={(e) => e.preventDefault()} style={{ color: 'var(--slate)', fontSize: '12px' }}>Support</a>
+          </div>
+        </div>
+      </footer>
     </AppLayout>
   );
 };

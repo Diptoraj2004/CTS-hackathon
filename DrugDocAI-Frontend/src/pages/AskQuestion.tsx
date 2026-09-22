@@ -727,6 +727,20 @@ export const AskQuestion: React.FC = () => {
                                       <span className="f04-meta-sub">{turn.ragData.confidenceDetail}</span>
                                     </div>
 
+                                    {turn.ragData.qualityMetrics && (
+                                      <div className="f04-quality-metrics" style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "10px" }}>
+                                        {([
+                                          ["Retrieval Precision", turn.ragData.qualityMetrics.retrieval_precision],
+                                          ["Answer Correctness", turn.ragData.qualityMetrics.answer_correctness],
+                                          ["Citation Accuracy", turn.ragData.qualityMetrics.citation_accuracy],
+                                        ] as const).map(([label, value]) => value != null && (
+                                          <span key={label} className="f04-meta-sub" title={turn.ragData?.qualityMetrics?.methodology || "Live grounding estimate"}>
+                                            {label}: <strong>{Math.round(value * 100)}%</strong>
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+
                                     <div className="f04-meta-divider" />
 
                                     <button

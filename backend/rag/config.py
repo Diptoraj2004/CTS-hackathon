@@ -13,7 +13,7 @@ LANCEDB_DIR.mkdir(parents=True, exist_ok=True)
 COLLECTION_NAME = "drug_labels"
 
 # Embedding model: must be the SAME model the ingestion teammate uses
-EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+EMBED_MODEL = os.getenv("EMBED_MODEL", os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"))
 
 # Retrieval
 TOP_K = 4

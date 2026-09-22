@@ -1,4 +1,4 @@
-﻿"""Data contracts for the RAG part: retrieval -> gate -> generation -> citations."""
+"""Data contracts for the RAG part: retrieval -> gate -> generation -> citations."""
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -77,6 +77,14 @@ class Citation(BaseModel):
     url: Optional[str] = None
 
 
+class QualityMetrics(BaseModel):
+    retrieval_precision: Optional[float] = None
+    answer_correctness: Optional[float] = None
+    citation_accuracy: Optional[float] = None
+    estimated: bool = True
+    methodology: str = "Live grounding estimates; use the offline gold-set evaluator for benchmark truth."
+
+
 class RAGResponse(BaseModel):
     """Final JSON sent to the frontend."""
     mode: Mode
@@ -87,9 +95,13 @@ class RAGResponse(BaseModel):
     confidence_bucket: Literal["low", "medium", "high"] = "low"
     reason: Optional[str] = None    # why it was escalated, if it was
     risk_level: Optional[Literal["none", "low", "high"]] = None  # "high" = mode-consistency/
-    # safety escalation; "low" = evidence-quality escalation (weak match, missing
-    # citations); "none" = the question isn't drug-related at all — not a safety
-    # matter, doesn't belong in the human review queue.
+    # safety escalation; "low" = evidence-quality escalation; "none" = off-topic.
+    intent: Optional[str] = None
+    intent_confidence: Optional[float] = None
+    retrieval_used: bool = False
+    history_used: bool = False
+    faers_used: bool = False
+    quality_metrics: QualityMetrics = Field(default_factory=QualityMetrics)
 
 
 class DrugProfile(BaseModel):

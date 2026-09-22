@@ -23,6 +23,14 @@ export interface RagBulletItem {
   text: string;
 }
 
+export interface RagQualityMetrics {
+  retrieval_precision?: number | null;
+  answer_correctness?: number | null;
+  citation_accuracy?: number | null;
+  estimated?: boolean;
+  methodology?: string;
+}
+
 export interface RagResponse {
   question: string;
   medication: string;
@@ -36,6 +44,12 @@ export interface RagResponse {
   confidenceDetail: string;
   sources: RagSource[];
   requestId?: string | null;
+  intent?: string | null;
+  intentConfidence?: number | null;
+  retrievalUsed?: boolean;
+  historyUsed?: boolean;
+  faersUsed?: boolean;
+  qualityMetrics?: RagQualityMetrics;
 }
 
 const DISCLAIMER =
@@ -219,7 +233,10 @@ export async function getRagResponse(
     // limit or a server outage — neither is fixed by rephrasing.
     let lead = "This question couldn't be processed.";
     let followUp = "Please rephrase your question and try again.";
-    if (res.status === 429) {
+    if (res.status === 400) {
+      lead = "This request was blocked by the prompt-injection safety layer.";
+      followUp = "Please submit a medication question instead of an instruction to change the assistant's operating rules.";
+    } else if (res.status === 429) {
       lead = "Too many questions at once.";
       followUp = "Please wait a moment before asking another question.";
     } else if (res.status === 422) {
@@ -248,6 +265,18 @@ export async function getRagResponse(
   const data = await res.json();
 
   if (data.status === "ESCALATED") {
+    if (data.reason === "PROMPT_INJECTION" || data.reason === "CORPUS_INJECTION") {
+      return {
+        question, medication, mode, risk_level: "high", confidence: "Low",
+        confidenceDetail: "Prompt-injection safety policy blocked this request.",
+        answerLead: data.answer || "This request was blocked by the prompt-injection safety layer.",
+        bulletPoints: [], answerFollowUp: "Please submit a medication question instead of an instruction to change the assistant's operating rules.",
+        disclaimer: DISCLAIMER, sources: [], requestId: null,
+        intent: data.intent ?? data.reason, intentConfidence: data.intent_confidence ?? 1,
+        retrievalUsed: false, historyUsed: false, faersUsed: false,
+        qualityMetrics: data.quality_metrics ?? undefined,
+      };
+    }
     // risk_level now comes straight from the backend (see backend/main.py's
     // _escalate) instead of regex-matching the human-readable reason text,
     // which never actually contained the words the old regex looked for.
@@ -271,6 +300,12 @@ export async function getRagResponse(
       disclaimer: DISCLAIMER,
       sources: [],
       requestId: data.request_id ?? null,
+      intent: data.intent ?? null,
+      intentConfidence: data.intent_confidence ?? null,
+      retrievalUsed: data.retrieval_used ?? false,
+      historyUsed: data.history_used ?? false,
+      faersUsed: data.faers_used ?? false,
+      qualityMetrics: data.quality_metrics ?? undefined,
     };
   }
 
@@ -296,6 +331,12 @@ export async function getRagResponse(
     confidenceDetail: "Based on the documents in the uploaded knowledge base.",
     sources,
     requestId: null,
+    intent: data.intent ?? null,
+    intentConfidence: data.intent_confidence ?? null,
+    retrievalUsed: data.retrieval_used ?? true,
+    historyUsed: data.history_used ?? false,
+    faersUsed: data.faers_used ?? false,
+    qualityMetrics: data.quality_metrics ?? undefined,
   };
 }
 

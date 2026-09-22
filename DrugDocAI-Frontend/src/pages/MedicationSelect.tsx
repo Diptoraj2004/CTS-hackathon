@@ -365,7 +365,7 @@ export const MedicationSelect: React.FC = () => {
         </div>
       </section>
 
-      <Footer />
+      <Footer isMinimal={true} />
     </AppLayout>
   );
 };
