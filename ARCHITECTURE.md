@@ -76,12 +76,10 @@ GET /ingest/{job_id}/status — poll for progress (exempt from rate limiting)
 
 ## 6. Known open gaps
 
-## 6. Known open gaps
-
 The core mentor-requested orchestration, FAERS routing, live quality-metric reporting, embedding-model benchmarking, and injection-specific handling are now implemented. The remaining gaps are primarily validation, production hardening, and operational persistence:
 
 1. **Confidence-bucket calibration**
-   Confidence thresholds are currently configurable but have not yet been statistically calibrated against a sufficiently large set of human-reviewed answers. The current thresholds should therefore be treated as provisional until reviewed validation data is available. See `backend/rag/confidence.py`.
+   A LanceDB-aware calibration harness now exists under `calib/` and evaluates the current retrieval, routing, and full-pipeline paths without creating a second retriever. The production confidence thresholds are still provisional until the harness is run against the current corpus and sufficiently reviewed/gold-labelled answers. See `backend/rag/confidence.py` and `calib/README.md`.
 
 2. **PDF metadata extraction remains heuristic for arbitrary layouts**
    The PDF ingestion pipeline supports structured extraction and OCR fallback, but section/version/effective-date detection can still be imperfect for labels with unusual layouts or formatting. Further validation against a broader collection of DailyMed/FDA label formats is required.
@@ -95,8 +93,8 @@ The core mentor-requested orchestration, FAERS routing, live quality-metric repo
 5. **Dashboard historical analytics require continued validation**
    Live dashboard statistics are available, but historical activity/source-type analytics should be verified against persisted event data before being described as production-grade analytics. Any remaining static presentation values should be replaced with backend-derived historical data.
 
-6. **Dependency versions should be fully pinned**
-   The project contains multiple requirement files. A final reproducibility pass should pin compatible versions across all backend, RAG, safety, and frontend dependencies and regenerate lock files where appropriate.
+6. **Dependency reproducibility across requirement files**
+   The checked-in Python requirement files are version-pinned. A final deployment pass should still verify that the overlapping requirement files remain mutually compatible and that frontend dependencies are locked by the frontend package lock file.
 
 7. **Colab persistence remains an operational limitation**
    Authentication, sessions, rate-limit state, audit data, and other SQLite/disk-backed state under `data/` can be lost when a Colab runtime is reset. This is acceptable for the current hackathon/demo environment but should be moved to persistent storage or an external database for deployment.
