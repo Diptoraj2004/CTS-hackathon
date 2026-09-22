@@ -287,15 +287,15 @@ export const SourcesEvidence: React.FC = () => {
             <div className="f03-facts-table">
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Drug class</span>
-                <span className="f03-fact-value">Antibiotic (Penicillin)</span>
+                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Available as</span>
-                <span className="f03-fact-value">Capsule, tablet, syrup, injection</span>
+                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Common brands</span>
-                <span className="f03-fact-value">Amoxil, Moxatag, Clavamox</span>
+                <span className="f03-fact-value">No verified information available in the current knowledge base.</span>
               </div>
             </div>
 

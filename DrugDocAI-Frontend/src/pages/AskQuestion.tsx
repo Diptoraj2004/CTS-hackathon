@@ -23,83 +23,18 @@ import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import { getRagResponse, RagResponse } from "../data/ragService";
 
-// ── Static drug metadata ──────────────────────────────────────────────────────
-const DRUG_META: Record<
-  string,
-  { drugClass: string; availableAs: string; commonBrands: string; description: string }
-> = {
-  paracetamol: {
-    drugClass: "Analgesic / Antipyretic",
-    availableAs: "Tablet, syrup, suppository",
-    commonBrands: "Calpol, Tylenol, Dolo",
-    description: "Pain reliever and fever reducer",
-  },
-  ibuprofen: {
-    drugClass: "NSAID",
-    availableAs: "Tablet, capsule, gel",
-    commonBrands: "Advil, Nurofen, Brufen",
-    description: "Anti-inflammatory and pain reliever",
-  },
-  amoxicillin: {
-    drugClass: "Antibiotic (Penicillin)",
-    availableAs: "Capsule, tablet, syrup, injection",
-    commonBrands: "Amoxil, Moxatag, Clavamox",
-    description: "Broad-spectrum antibiotic",
-  },
-  metformin: {
-    drugClass: "Biguanide (Antidiabetic)",
-    availableAs: "Tablet, extended-release tablet",
-    commonBrands: "Glucophage, Fortamet",
-    description: "First-line treatment for type 2 diabetes",
-  },
-  atorvastatin: {
-    drugClass: "Statin",
-    availableAs: "Tablet",
-    commonBrands: "Lipitor, Torvast",
-    description: "Cholesterol-lowering medication",
-  },
-  omeprazole: {
-    drugClass: "Proton pump inhibitor",
-    availableAs: "Capsule, tablet, injection",
-    commonBrands: "Prilosec, Losec",
-    description: "Reduces stomach acid production",
-  },
-  amlodipine: {
-    drugClass: "Calcium channel blocker",
-    availableAs: "Tablet",
-    commonBrands: "Norvasc, Amlip",
-    description: "Used for hypertension and angina",
-  },
-  cetirizine: {
-    drugClass: "Antihistamine",
-    availableAs: "Tablet, syrup",
-    commonBrands: "Zyrtec, Reactine",
-    description: "Allergy symptom reliever",
-  },
-  ketoconazole: {
-    drugClass: "Antifungal",
-    availableAs: "Tablet, topical cream, shampoo",
-    commonBrands: "Nizoral, Fungoral",
-    description: "Antifungal medication",
-  },
-  crocin: {
-    drugClass: "Analgesic / Antipyretic",
-    availableAs: "Tablet, syrup",
-    commonBrands: "Crocin, Calpol",
-    description: "Pain and fever relief",
-  },
-};
+// ── Drug metadata ─────────────────────────────────────────────────────────────
+// No hardcoded medical facts. All fields show a safe empty-state message
+// unless verified structured data is available from the knowledge base.
+const NO_INFO = "No verified information available in the current knowledge base.";
 
-function getDrugMeta(drug: string) {
-  const key = drug.toLowerCase();
-  return (
-    DRUG_META[key] ?? {
-      drugClass: "Antibiotic / Therapeutic agent",
-      availableAs: "Capsule, tablet, syrup",
-      commonBrands: `${drug} Brand, Generic ${drug}`,
-      description: "Prescription medication",
-    }
-  );
+function getDrugMeta(_drug: string) {
+  return {
+    drugClass: NO_INFO,
+    availableAs: NO_INFO,
+    commonBrands: NO_INFO,
+    description: NO_INFO,
+  };
 }
 
 function buildSuggestedQuestions(drug: string): string[] {

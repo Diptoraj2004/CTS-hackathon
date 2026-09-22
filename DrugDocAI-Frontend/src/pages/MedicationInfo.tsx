@@ -21,6 +21,7 @@ import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { getMedicationInfo, MedicationInfoDetails } from "../data/medicationInfoData";
+import { loadRagSources, RagSource } from "../data/ragService";
 
 export const MedicationInfo: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -29,7 +30,9 @@ export const MedicationInfo: React.FC = () => {
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") as "patient" | "professional") || "professional";
 
-  const medInfo: MedicationInfoDetails = getMedicationInfo(drug);
+  const medInfo: MedicationInfoDetails | null = getMedicationInfo(drug);
+  const ragSources: RagSource[] | null = loadRagSources(drug, mode);
+
   const [activeTab, setActiveTab] = useState<string>("overview");
 
   const scrollToSection = (sectionId: string) => {
@@ -47,6 +50,11 @@ export const MedicationInfo: React.FC = () => {
   const handleViewSources = () => {
     navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`);
   };
+
+  const displaySources = (ragSources || []).map((src, i) => ({
+    id: src.id || i + 1,
+    name: src.name || src.doc || "Knowledge Base Source",
+  }));
 
   return (
     <AppLayout>
@@ -137,8 +145,10 @@ export const MedicationInfo: React.FC = () => {
               </div>
               <div className="mi-drug-info">
                 <span className="mi-label">MEDICATION</span>
-                <h1 className="mi-drug-title">{medInfo.name}</h1>
-                <span className="mi-drug-sub">{medInfo.description}</span>
+                <h1 className="mi-drug-title">{drug}</h1>
+                <span className="mi-drug-sub">
+                  {medInfo?.description || "No verified information available in the current knowledge base."}
+                </span>
               </div>
             </div>
 
@@ -148,7 +158,9 @@ export const MedicationInfo: React.FC = () => {
               </div>
               <div className="mi-class-info">
                 <span className="mi-class-label">Drug class</span>
-                <span className="mi-class-value">{medInfo.drugClass}</span>
+                <span className="mi-class-value">
+                  {medInfo?.drugClass || "No verified information available in the current knowledge base."}
+                </span>
               </div>
             </div>
 
@@ -191,7 +203,9 @@ export const MedicationInfo: React.FC = () => {
                 <FileText size={18} className="mi-card-icon" />
                 <h2 className="mi-card-title">Drug Overview</h2>
               </div>
-              <p className="mi-card-body">{medInfo.overview}</p>
+              <p className="mi-card-body">
+                {medInfo?.overview || "No verified information available in the current knowledge base."}
+              </p>
             </article>
 
             {/* 2. Grid: Uses & Available Forms */}
@@ -202,11 +216,17 @@ export const MedicationInfo: React.FC = () => {
                   <CheckCircle2 size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Uses</h2>
                 </div>
-                <ul className="mi-bullet-list">
-                  {medInfo.uses.map((item, idx) => (
-                    <li key={idx}>{item}</li>
-                  ))}
-                </ul>
+                {medInfo?.uses && medInfo.uses.length > 0 ? (
+                  <ul className="mi-bullet-list">
+                    {medInfo.uses.map((item, idx) => (
+                      <li key={idx}>{item}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                    No verified information available in the current knowledge base.
+                  </p>
+                )}
               </article>
 
               {/* Available Forms Card */}
@@ -215,16 +235,24 @@ export const MedicationInfo: React.FC = () => {
                   <Package size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Available Forms</h2>
                 </div>
-                <ul className="mi-bullet-list">
-                  {medInfo.availableForms.map((item, idx) => (
-                    <li key={idx}>{item}</li>
-                  ))}
-                </ul>
-                {medInfo.formsNote && (
-                  <div className="mi-notice-box">
-                    <Info size={14} className="mi-notice-icon" />
-                    <span>{medInfo.formsNote}</span>
-                  </div>
+                {medInfo?.availableForms && medInfo.availableForms.length > 0 ? (
+                  <>
+                    <ul className="mi-bullet-list">
+                      {medInfo.availableForms.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                    {medInfo.formsNote && (
+                      <div className="mi-notice-box">
+                        <Info size={14} className="mi-notice-icon" />
+                        <span>{medInfo.formsNote}</span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                    No verified information available in the current knowledge base.
+                  </p>
                 )}
               </article>
             </div>
@@ -235,13 +263,19 @@ export const MedicationInfo: React.FC = () => {
                 <FileCheck size={18} className="mi-card-icon" />
                 <h2 className="mi-card-title">Dosage Information</h2>
               </div>
-              <div className="mi-card-body-stack">
-                {medInfo.dosageInformation.map((paragraph, idx) => (
-                  <p key={idx} className="mi-card-body">
-                    {paragraph}
-                  </p>
-                ))}
-              </div>
+              {medInfo?.dosageInformation && medInfo.dosageInformation.length > 0 ? (
+                <div className="mi-card-body-stack">
+                  {medInfo.dosageInformation.map((paragraph, idx) => (
+                    <p key={idx} className="mi-card-body">
+                      {paragraph}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                  No verified information available in the current knowledge base.
+                </p>
+              )}
             </article>
 
             {/* 4. Grid: Side Effects & Interactions */}
@@ -252,16 +286,24 @@ export const MedicationInfo: React.FC = () => {
                   <AlertTriangle size={18} className="mi-card-icon mi-card-icon--orange" />
                   <h2 className="mi-card-title">Common Side Effects</h2>
                 </div>
-                <ul className="mi-bullet-list">
-                  {medInfo.commonSideEffects.map((item, idx) => (
-                    <li key={idx}>{item}</li>
-                  ))}
-                </ul>
-                {medInfo.sideEffectsNote && (
-                  <div className="mi-notice-box">
-                    <Info size={14} className="mi-notice-icon" />
-                    <span>{medInfo.sideEffectsNote}</span>
-                  </div>
+                {medInfo?.commonSideEffects && medInfo.commonSideEffects.length > 0 ? (
+                  <>
+                    <ul className="mi-bullet-list">
+                      {medInfo.commonSideEffects.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                    {medInfo.sideEffectsNote && (
+                      <div className="mi-notice-box">
+                        <Info size={14} className="mi-notice-icon" />
+                        <span>{medInfo.sideEffectsNote}</span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                    No verified information available in the current knowledge base.
+                  </p>
                 )}
               </article>
 
@@ -271,16 +313,24 @@ export const MedicationInfo: React.FC = () => {
                   <LinkIcon size={18} className="mi-card-icon" />
                   <h2 className="mi-card-title">Interactions</h2>
                 </div>
-                <ul className="mi-bullet-list">
-                  {medInfo.interactions.map((item, idx) => (
-                    <li key={idx}>{item}</li>
-                  ))}
-                </ul>
-                {medInfo.interactionsNote && (
-                  <div className="mi-notice-box">
-                    <Info size={14} className="mi-notice-icon" />
-                    <span>{medInfo.interactionsNote}</span>
-                  </div>
+                {medInfo?.interactions && medInfo.interactions.length > 0 ? (
+                  <>
+                    <ul className="mi-bullet-list">
+                      {medInfo.interactions.map((item, idx) => (
+                        <li key={idx}>{item}</li>
+                      ))}
+                    </ul>
+                    {medInfo.interactionsNote && (
+                      <div className="mi-notice-box">
+                        <Info size={14} className="mi-notice-icon" />
+                        <span>{medInfo.interactionsNote}</span>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                    No verified information available in the current knowledge base.
+                  </p>
                 )}
               </article>
             </div>
@@ -291,18 +341,28 @@ export const MedicationInfo: React.FC = () => {
                 <ShieldAlert size={18} className="mi-card-icon mi-card-icon--teal" />
                 <h2 className="mi-card-title">Warnings &amp; Precautions</h2>
               </div>
-              <ul className="mi-bullet-list">
-                {medInfo.warnings.map((item, idx) => (
-                  <li key={idx}>{item}</li>
-                ))}
-              </ul>
+              {medInfo?.warnings && medInfo.warnings.length > 0 ? (
+                <ul className="mi-bullet-list">
+                  {medInfo.warnings.map((item, idx) => (
+                    <li key={idx}>{item}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mi-card-body" style={{ color: "var(--text-muted, #6b7280)" }}>
+                  No verified information available in the current knowledge base.
+                </p>
+              )}
             </article>
 
             {/* Compact Sources Link Banner */}
             <div id="sources" className="mi-sources-banner">
               <div className="mi-sources-banner-info">
                 <FileText size={16} className="mi-sources-banner-icon" />
-                <span>Information retrieved from {medInfo.sources.length} verified official sources.</span>
+                <span>
+                  {displaySources.length > 0
+                    ? `Information retrieved from ${displaySources.length} verified source(s).`
+                    : "No verified information available in the current knowledge base."}
+                </span>
               </div>
               <button
                 type="button"
@@ -322,22 +382,30 @@ export const MedicationInfo: React.FC = () => {
           <div className="f03-info-card">
             <div className="f03-info-card-header">
               <FileText size={16} className="f03-info-card-icon" />
-              <h4 className="f03-info-card-title">About {medInfo.name}</h4>
+              <h4 className="f03-info-card-title">About {drug}</h4>
             </div>
             <p className="f03-info-card-sub">Quick facts from official sources.</p>
 
             <div className="f03-facts-table">
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Drug class</span>
-                <span className="f03-fact-value">{medInfo.drugClass}</span>
+                <span className="f03-fact-value">
+                  {medInfo?.drugClass || "No verified information available in the current knowledge base."}
+                </span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Available as</span>
-                <span className="f03-fact-value">Capsule, tablet, syrup, injection</span>
+                <span className="f03-fact-value">
+                  {medInfo?.availableForms && medInfo.availableForms.length > 0
+                    ? medInfo.availableForms.join(", ")
+                    : "No verified information available in the current knowledge base."}
+                </span>
               </div>
               <div className="f03-fact-row">
                 <span className="f03-fact-label">Common brands</span>
-                <span className="f03-fact-value">Amoxil, Moxatag, Clavamox</span>
+                <span className="f03-fact-value">
+                  No verified information available in the current knowledge base.
+                </span>
               </div>
             </div>
 
@@ -359,21 +427,27 @@ export const MedicationInfo: React.FC = () => {
             <p className="f03-info-card-sub">Information from trusted medical sources.</p>
 
             <div className="f04-sources-list">
-              {medInfo.sources.map((src) => (
-                <div key={src.id} className="f04-source-item">
-                  <span className="f04-source-number">{src.id}</span>
-                  <div className="f04-source-details">
-                    <strong className="f04-source-name">{src.name}</strong>
-                    <button
-                      className="f04-source-link"
-                      type="button"
-                      onClick={handleViewSources}
-                    >
-                      Access data <ArrowRight size={12} />
-                    </button>
+              {displaySources.length > 0 ? (
+                displaySources.map((src) => (
+                  <div key={src.id} className="f04-source-item">
+                    <span className="f04-source-number">{src.id}</span>
+                    <div className="f04-source-details">
+                      <strong className="f04-source-name">{src.name}</strong>
+                      <button
+                        className="f04-source-link"
+                        type="button"
+                        onClick={handleViewSources}
+                      >
+                        Access data <ArrowRight size={12} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <p style={{ fontSize: "13px", color: "var(--text-muted, #9ca3af)", margin: 0 }}>
+                  No verified information available in the current knowledge base.
+                </p>
+              )}
             </div>
 
             <button
@@ -409,3 +483,4 @@ export const MedicationInfo: React.FC = () => {
     </AppLayout>
   );
 };
+
