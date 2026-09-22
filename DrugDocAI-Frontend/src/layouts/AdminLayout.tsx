@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { NotificationDropdown } from "../components/admin/NotificationDropdown";
 import { mockAuth } from "../auth/mockAuth";
+import { Footer } from "../components/Footer";
 
 // ── Admin Sidebar Navigation Items ───────────────────────────────────────────
 const NAV_ITEMS = [
@@ -132,11 +133,7 @@ export const AdminLayout: React.FC<AdminLayoutProps> = ({ children, title }) => 
           {children}
         </div>
 
-        {/* Footer */}
-        <footer className="admin-footer">
-          <span>© 2026 DrugDoc AI</span>
-          <span className="admin-footer-links">Evidence-based · Audit-logged</span>
-        </footer>
+        <Footer />
       </div>
     </div>
   );
