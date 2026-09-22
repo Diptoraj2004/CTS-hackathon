@@ -775,45 +775,49 @@ export const AskQuestion: React.FC = () => {
 
         {/* ── RIGHT COLUMN ──────────────────────────────────────────────── */}
         <div className="f03-right-col">
-          {/* Card 1: About [Medication] (Present on F-03, F-04 & F-06) */}
-          <div className="f03-info-card">
-            <div className="f03-info-card-header">
-              <div className="guidance-icon-badge">
-                <FileText size={15} />
-              </div>
-              <h4 className="f03-info-card-title">About {drug}</h4>
-            </div>
-            <p className="f03-info-card-sub">Quick facts from official sources.</p>
+          {activeQuestion && !isFetching &&(
+            <>
+              {/* Card 1: About [Medication] (Present on F-03, F-04 & F-06) */}
+              <div className="f03-info-card">
+                <div className="f03-info-card-header">
+                  <div className="guidance-icon-badge">
+                    <FileText size={15} />
+                  </div>
+                  <h4 className="f03-info-card-title">About {drug}</h4>
+                </div>
+                <p className="f03-info-card-sub">Quick facts from official sources.</p>
 
-            <div className="f03-drug-facts">
-              <div className="f03-fact-row">
-                <span className="f03-fact-label">Drug class</span>
-                <span className="f03-fact-value">{drugProfile?.class || NO_INFO}</span>
-              </div>
-              <div className="f03-fact-row">
-                <span className="f03-fact-label">Available as</span>
-                <span className="f03-fact-value">
-                  {drugProfile?.forms && drugProfile.forms.length > 0
-                    ? drugProfile.forms.join(", ")
-                    : NO_INFO}
-                </span>
-              </div>
-              <div className="f03-fact-row">
-                <span className="f03-fact-label">Common brands</span>
-                <span className="f03-fact-value">{NO_INFO}</span>
-              </div>
-            </div>
+                <div className="f03-drug-facts">
+                  <div className="f03-fact-row">
+                    <span className="f03-fact-label">Drug class</span>
+                    <span className="f03-fact-value">{drugProfile?.class || NO_INFO}</span>
+                  </div>
+                  <div className="f03-fact-row">
+                    <span className="f03-fact-label">Available as</span>
+                    <span className="f03-fact-value">
+                      {drugProfile?.forms && drugProfile.forms.length > 0
+                        ? drugProfile.forms.join(", ")
+                        : NO_INFO}
+                    </span>
+                  </div>
+                  <div className="f03-fact-row">
+                    <span className="f03-fact-label">Common brands</span>
+                    <span className="f03-fact-value">{NO_INFO}</span>
+                  </div>
+                </div>
 
-            <button
-              className="f03-info-link"
-              type="button"
-              onClick={() =>
-                navigate(`/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`)
-              }
-            >
-              View full drug information <ArrowRight size={13} />
-            </button>
-          </div>
+                <button
+                  className="f03-info-link"
+                  type="button"
+                  onClick={() =>
+                    navigate(`/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`)
+                  }
+                >
+                  View full drug information <ArrowRight size={13} />
+                </button>
+              </div>
+            </>
+          )}
 
           {/* Card 2:
               - In F-03 (no question yet): Important Card
