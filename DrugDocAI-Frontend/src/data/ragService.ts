@@ -304,17 +304,36 @@ export interface DrugProfileResponse {
   warnings?: string[];
 }
 
-export async function getDrugProfile(drug: string): Promise<DrugProfileResponse | null> {
-  if (!drug || !drug.trim()) return null;
-  try {
-    const res = await fetch(`${API_BASE}/api/drug-profile`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ drug: drug.trim() }),
-    });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch {
-    return null;
+const drugProfileCache = new Map<
+  string,
+  Promise<DrugProfileResponse | null>
+>();
+
+export function getDrugProfile(
+  drug: string
+): Promise<DrugProfileResponse | null> {
+  const normalizedDrug = drug.trim().toLowerCase();
+
+  if (!normalizedDrug) {
+    return Promise.resolve(null);
   }
+
+  const cached = drugProfileCache.get(normalizedDrug);
+  if (cached) {
+    return cached;
+  }
+
+  const request = fetch(`${API_BASE}/api/drug-profile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ drug: normalizedDrug }),
+  })
+    .then(async (res) => {
+      if (!res.ok) return null;
+      return await res.json();
+    })
+    .catch(() => null);
+
+  drugProfileCache.set(normalizedDrug, request);
+  return request;
 }

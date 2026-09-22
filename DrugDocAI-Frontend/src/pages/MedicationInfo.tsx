@@ -22,7 +22,6 @@ import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
 
-const drugProfileCache = new Map<string, Promise<DrugProfileResponse | null>>();
 export const MedicationInfo: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
