@@ -22,6 +22,7 @@ import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
 
+const drugProfileCache = new Map<string, Promise<DrugProfileResponse | null>>();
 export const MedicationInfo: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -36,7 +37,17 @@ export const MedicationInfo: React.FC = () => {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    getDrugProfile(drug)
+
+    const key = drug.trim().toLowerCase();
+
+    let request = drugProfileCache.get(key);
+
+    if (!request) {
+      request = getDrugProfile(drug);
+      drugProfileCache.set(key, request);
+    }
+
+    request
       .then((data) => {
         if (!cancelled) setProfile(data);
       })
@@ -46,6 +57,7 @@ export const MedicationInfo: React.FC = () => {
       .finally(() => {
         if (!cancelled) setLoading(false);
       });
+
     return () => {
       cancelled = true;
     };
