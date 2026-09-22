@@ -37,8 +37,25 @@ chroma_db/
 Thumbs.db
 *.sqlite3
 *.db
-# Frontend dependencies
-node_modules/
-# Runtime SQLite files
+
+# Local runtime / database files
 data/*.sqlite3
 data/*.sqlite3-*
+data/audit/*.json
+data/audit/*.jsonl
+data/lancedb_data/
+
+# Frontend build artifacts
+DrugDocAI-Frontend/dist/
+DrugDocAI-Frontend/node_modules/
+DrugDocAI-Frontend/node_modules/.tmp/
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local environment
+.env
+.env.*
+!.env.example
