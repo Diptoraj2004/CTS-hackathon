@@ -1,61 +1,60 @@
-# LanceDB local data
-backend/rag/lancedb_data/
+# ─────────────────────────────────────────────
+# Local runtime data
+# ─────────────────────────────────────────────
 
-# Runtime state — uploaded documents, the vector DB, the version registry,
-# the audit log and review queue. Generated at runtime, not source, differs
-# machine to machine, and audit_log.jsonl/review_queue.json grow on every
-# run — committing them guarantees a merge conflict the next time anyone
-# else runs the app locally.
 data/uploads/
 data/vector_db/
 data/audit/
+data/lancedb_data/
 
-# Built frontend output
+# Legacy/alternate LanceDB location, if still used locally
+backend/rag/lancedb_data/
+
+# Local databases
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# ─────────────────────────────────────────────
+# Frontend build / dependencies
+# ─────────────────────────────────────────────
+
 DrugDocAI-Frontend/dist/
+DrugDocAI-Frontend/node_modules/
 
-# Virtual environment
+# ─────────────────────────────────────────────
+# Python
+# ─────────────────────────────────────────────
+
 .venv/
 venv/
-
-# Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
 
-# Secrets (API keys like GROQ_API_KEY go here, never on GitHub)
+# ─────────────────────────────────────────────
+# Secrets / environment
+# ─────────────────────────────────────────────
+
 .env
+.env.*
+!.env.example
 
-# Downloaded models and local data
+# ─────────────────────────────────────────────
+# Models / local ML data
+# ─────────────────────────────────────────────
+
 models/
 *.faiss
 *.pkl
 chroma_db/
 
-# Editor / OS files
+# ─────────────────────────────────────────────
+# Editor / OS
+# ─────────────────────────────────────────────
+
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
-*.sqlite3
-*.db
-
-# Local runtime / database files
-data/*.sqlite3
-data/*.sqlite3-*
-data/audit/*.json
-data/audit/*.jsonl
-data/lancedb_data/
-
-# Frontend build artifacts
-DrugDocAI-Frontend/dist/
-DrugDocAI-Frontend/node_modules/
-DrugDocAI-Frontend/node_modules/.tmp/
-
-# Python cache
-__pycache__/
-*.py[cod]
-.pytest_cache/
-
-# Local environment
-.env
-.env.*
-!.env.example
