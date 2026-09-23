@@ -55,7 +55,11 @@ interface TurnItem {
   ragData: RagResponse | null;
   isEscalated?: boolean;
 }
+const CHAT_STORAGE_PREFIX = "drugdoc_chat_turns";
 
+function getChatStorageKey(drug: string, mode: string): string {
+  return `${CHAT_STORAGE_PREFIX}:${drug.toLowerCase()}:${mode}`;
+}
 // ── Typing dots animation component ──────────────────────────────────────────
 const TypingDots: React.FC = () => (
   <span className="f03-typing-dots" aria-label="DrugDoc AI is thinking">
@@ -103,7 +107,28 @@ export const AskQuestion: React.FC = () => {
   const suggestedQuestions = buildSuggestedQuestions(drug);
 
   // Conversation history turns
-  const [turns, setTurns] = useState<TurnItem[]>([]);
+  const [turns, setTurns] = useState<TurnItem[]>(() => {
+  try {
+    const key = getChatStorageKey(drug, mode);
+    const stored = sessionStorage.getItem(key);
+
+    if (!stored) return [];
+
+    const parsed = JSON.parse(stored);
+
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+});
+useEffect(() => {
+  try {
+    const key = getChatStorageKey(drug, mode);
+    sessionStorage.setItem(key, JSON.stringify(turns));
+  } catch {
+    // Ignore storage failures.
+  }
+}, [turns, drug, mode]);
   const [nearLimit, setNearLimit] = useState(false);
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [rolloverNotice, setRolloverNotice] = useState<string | null>(null);
@@ -234,7 +259,7 @@ export const AskQuestion: React.FC = () => {
   };
 
   const handleViewDocs = () => {
-    navigate(`/docs?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+    navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`);
   };
 
   const handleRollover = async () => {
