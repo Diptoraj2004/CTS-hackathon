@@ -1,36 +1,31 @@
-/** Bearer-token storage and authenticated requests for protected admin APIs. */
-const TOKEN_KEY = "drugdoc_auth_token";
+/** Backwards-compatible auth helpers for existing admin code. */
+import {
+  authenticatedFetch,
+  clearAuthSession,
+  getAuthToken,
+  isAuthenticated,
+  setAuthToken,
+} from "../data/api";
 
-export function getAuthToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
-}
-export function setAuthToken(token: string): void {
-  sessionStorage.setItem(TOKEN_KEY, token);
-}
+export { getAuthToken, setAuthToken };
 
-/** Remove the bearer token from this browser tab. */
+/** Remove the bearer token and local account state from this browser tab. */
 export function clearAdminKey(): void {
-  sessionStorage.removeItem(TOKEN_KEY);
+  clearAuthSession();
 }
 
 /** True if a bearer token is currently stored in this tab. */
 export function isAdminKeyPresent(): boolean {
-  return !!sessionStorage.getItem(TOKEN_KEY);
+  return isAuthenticated();
 }
 
 /**
- * A thin wrapper around fetch that injects the bearer token when available.
+ * Existing admin API name retained so admin pages do not need a second
+ * authentication implementation.
  */
 export async function adminFetch(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  const token = getAuthToken();
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
-  }
-
-  return fetch(input, { ...init, headers });
+  return authenticatedFetch(input, init);
 }
-
