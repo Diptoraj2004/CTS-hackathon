@@ -85,6 +85,40 @@ export interface ChatSessionDetail extends ChatSessionSummary {
   messages: ChatSessionMessage[];
 }
 
+export async function listChatSessions(): Promise<ChatSessionSummary[]> {
+  const response = await authenticatedFetch(`${API_BASE}/sessions`);
+  const data = await response.json().catch(() => []);
+
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.detail === "string"
+        ? data.detail
+        : "Could not load conversation history (HTTP " + response.status + ")."
+    );
+  }
+
+  return Array.isArray(data) ? (data as ChatSessionSummary[]) : [];
+}
+
+export async function deleteChatSession(sessionId: string): Promise<void> {
+  const id = sessionId.trim();
+  if (!id) throw new Error("No conversation session was provided.");
+
+  const response = await authenticatedFetch(
+    `${API_BASE}/sessions/${encodeURIComponent(id)}`,
+    { method: "DELETE" }
+  );
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.detail === "string"
+        ? data.detail
+        : "Could not delete the conversation (HTTP " + response.status + ")."
+    );
+  }
+}
+
 export async function getChatSession(
   sessionId: string
 ): Promise<ChatSessionDetail> {
