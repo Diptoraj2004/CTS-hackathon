@@ -22,6 +22,7 @@ import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import {
   getRagResponse,
+  getSessionId,
   RagResponse,
   getDrugProfile,
   DrugProfileResponse,
@@ -87,6 +88,7 @@ export const AskQuestion: React.FC = () => {
 
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") || (user?.role === "doctor" ? "professional" : "patient")) as "patient" | "professional";
+  const sessionId = getSessionId();
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
 
@@ -103,6 +105,12 @@ export const AskQuestion: React.FC = () => {
       cancelled = true;
     };
   }, [drug]);
+
+  useEffect(() => {
+    if (!sessionId) {
+      navigate("/select", { replace: true });
+    }
+  }, [navigate, sessionId]);
 
   const suggestedQuestions = buildSuggestedQuestions(drug);
 
@@ -185,7 +193,9 @@ useEffect(() => {
       setTurns((prev) => [...prev, newTurn]);
       setInputValue("");
 
-      getRagResponse(cleanQ, drug, mode)
+      if (!sessionId) return;
+
+      getRagResponse(cleanQ, drug, mode, sessionId)
         .then(async (data) => {
           setTurns((prev) =>
             prev.map((t) =>
@@ -195,7 +205,7 @@ useEffect(() => {
             )
           );
           // Check context status after answer is returned
-          const status = await getContextStatus();
+          const status = await getContextStatus(sessionId);
           if (status && status.near_limit) {
             setNearLimit(true);
           }
@@ -227,7 +237,7 @@ useEffect(() => {
           );
         });
     },
-    [drug, mode]
+    [drug, mode, sessionId]
   );
 
   const handleSend = () => {
@@ -264,7 +274,7 @@ useEffect(() => {
 
   const handleRollover = async () => {
     setIsRollingOver(true);
-    const res = await rolloverSession();
+    const res = await rolloverSession(sessionId);
     setIsRollingOver(false);
     if (res) {
       setNearLimit(false);
