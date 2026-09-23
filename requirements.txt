@@ -5,7 +5,15 @@ pdfplumber==0.11.4
 lxml==5.2.1
 pytesseract==0.3.13
 Pillow==10.4.0
+
+# sentence-transformers==2.5.1 imports `cached_download` from huggingface_hub
+# at module load time. That symbol was removed from huggingface_hub 0.20+,
+# so an unpinned/newer huggingface_hub breaks `import sentence_transformers`
+# with: ImportError: cannot import name 'cached_download' from 'huggingface_hub'
+# Pin it explicitly so pip doesn't silently resolve to a broken combo.
 sentence-transformers==2.5.1
+huggingface_hub==0.19.4
+
 lancedb==0.38.0
 pandas==2.2.3
 pyarrow==18.1.0

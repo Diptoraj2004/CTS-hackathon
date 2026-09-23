@@ -38,7 +38,7 @@ question + mode
 ~~~powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r backend\rag\requirements.txt
+python -m pip install -r ../../requirements.txt
 ~~~
 
 Install Ollama from https://ollama.com/download, then download the model:
