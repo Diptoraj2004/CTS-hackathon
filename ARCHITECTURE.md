@@ -76,12 +76,82 @@ GET /ingest/{job_id}/status — poll for progress (exempt from rate limiting)
 
 ## 6. Known open gaps
 
-Two LanceDB wrapper implementations still coexist (one unused for the live path). PDF section/version/date extraction is still heuristic, not fully reliable on arbitrary layouts. No confidence-bucket calibration against real reviewed data yet (thresholds are a documented placeholder — see `confidence.py`). Frontend dashboard's historical activity chart and source-type breakdown are still static — no backend history tracking for those specific views yet (`/dashboard/stats` covers live counts only). No dependency version pinning across all requirements files. SQLite-backed state (auth, sessions, rate limits) lives under `data/`, which is wiped on a fresh Colab instance unless that directory is persisted elsewhere.
+The core mentor-requested orchestration, FAERS routing, live quality-metric reporting, embedding-model benchmarking, and injection-specific handling are now implemented. The remaining gaps are primarily validation, production hardening, and operational persistence:
 
-## Intent-Orchestrated Retrieval (September 2026)
+1. **Confidence-bucket calibration**
+   A LanceDB-aware calibration harness now exists under `calib/` and evaluates the current retrieval, routing, and full-pipeline paths without creating a second retriever. The production confidence thresholds are still provisional until the harness is run against the current corpus and sufficiently reviewed/gold-labelled answers. See `backend/rag/confidence.py` and `calib/README.md`.
 
-The query path now starts with a lightweight intent classifier before vector retrieval. This avoids unnecessary retrieval for history-only questions and selects FAERS for frequency/report-count queries:
+2. **PDF metadata extraction remains heuristic for arbitrary layouts**
+   The PDF ingestion pipeline supports structured extraction and OCR fallback, but section/version/effective-date detection can still be imperfect for labels with unusual layouts or formatting. Further validation against a broader collection of DailyMed/FDA label formats is required.
 
-`query -> intent router -> history / label retrieval / FAERS -> generation -> citation validation -> quality metrics`
+3. **Embedding-model selection requires empirical completion**
+   A benchmark harness now compares `all-MiniLM-L6-v2`, `FremyCompany/BioLORD-2023-M`, and `NeuML/pubmedbert-base-embeddings`. The benchmark infrastructure is implemented, but the final model decision should be based on measured patient-mode and clinician-mode retrieval performance on the project's gold/evaluation set rather than assumption.
 
-The API exposes `intent`, `retrieval_used`, `history_used`, `faers_used`, and `quality_metrics` on each response. Live quality metrics are explicitly estimates; the gold-set evaluator remains authoritative for benchmark reporting.
+4. **Per-query quality metrics are evaluator estimates, not ground truth**
+   Retrieval Precision, Answer Correctness, and Citation Accuracy are now exposed with responses. For live queries, these values should be understood as automated/evaluator estimates. Definitive benchmark results require a reference/gold answer set and human-reviewed validation data.
+
+5. **Dashboard historical analytics require continued validation**
+   Live dashboard statistics are available, but historical activity/source-type analytics should be verified against persisted event data before being described as production-grade analytics. Any remaining static presentation values should be replaced with backend-derived historical data.
+
+6. **Dependency reproducibility across requirement files**
+   The checked-in Python requirement files are version-pinned. A final deployment pass should still verify that the overlapping requirement files remain mutually compatible and that frontend dependencies are locked by the frontend package lock file.
+
+7. **Colab persistence remains an operational limitation**
+   Authentication, sessions, rate-limit state, audit data, and other SQLite/disk-backed state under `data/` can be lost when a Colab runtime is reset. This is acceptable for the current hackathon/demo environment but should be moved to persistent storage or an external database for deployment.
+
+8. **FAERS coverage and semantics require continued validation**
+   FAERS frequency/report-count queries are now routed through the intent layer and clearly separated from official-label evidence. However, FAERS values represent spontaneous safety reports and must not be interpreted as population incidence rates. Additional validation is required for drug-name matching, multiple-drug queries, date ranges, and partial API failures.
+
+9. **History-only responses require provenance-aware validation**
+   The system can answer some conversational follow-ups from session context without performing a new vector search. These responses must remain clearly distinguished from answers grounded in authoritative drug-label evidence. Factual questions that require verification should continue to force retrieval rather than relying solely on previous assistant output.
+
+10. **Multi-drug and ambiguous-entity queries need broader evaluation**
+    Drug extraction, alias resolution, and conversational follow-up handling are implemented, but complex questions involving multiple drugs, ambiguous references, or several simultaneous evidence sources require additional benchmark cases.
+
+11. **Failure-path testing remains ongoing**
+    Additional automated tests should cover FAERS timeouts/unavailability, model-provider failures, empty retrieval, citation failures, prompt injection through retrieved documents, long multi-turn sessions, duplicate requests, and partial-response behavior.
+
+12. **Human-reviewed evaluation remains the final validation step**
+    The automated evaluation suite provides regression and benchmark support, but final confidence in retrieval precision, answer correctness, citation accuracy, safety routing, and patient/clinician behavior should be established using a reviewed evaluation set.
+
+
+## Intent-Orchestrated Retrieval 
+
+The query path now uses a lightweight intent-routing layer before retrieval. The router determines whether the request can be answered from conversational context, requires authoritative label retrieval, requires supplementary FAERS data, requires both sources, or should be handled by a safety/off-topic pathway.
+
+```text
+User query
+    ↓
+Injection / safety pre-check
+    ↓
+Intent classification
+    ├── HISTORY_ONLY → conversation context
+    ├── LABEL_RAG → vector retrieval
+    ├── FAERS_FREQUENCY → label retrieval + FAERS
+    ├── CONTEXTUAL_RAG → history + vector retrieval
+    ├── OFF_TOPIC → scoped response
+    └── INJECTION → injection-specific response
+    ↓
+Evidence / context assembly
+    ↓
+Generation
+    ↓
+Redaction + citation validation
+    ↓
+Confidence / safety checks
+    ↓
+Quality metrics
+    ├── Retrieval Precision
+    ├── Answer Correctness
+    └── Citation Accuracy
+    ↓
+Final response
+```
+
+The API exposes intent-routing information including `intent`, `retrieval_used`, `history_used`, and `faers_used`, together with the three requested quality metrics.
+
+For live queries, the three quality metrics are explicitly treated as automated estimates rather than ground-truth measurements. The gold-standard evaluation suite remains the authoritative mechanism for benchmark reporting.
+
+FAERS evidence is kept distinct from official prescribing-information evidence. FAERS is used for spontaneous adverse-event reporting/frequency-style questions and is not interpreted as a population incidence rate.
+
+The system also distinguishes prompt-injection handling from medical-risk escalation, so an injection attempt does not receive the same response pathway as a high-risk clinical question.

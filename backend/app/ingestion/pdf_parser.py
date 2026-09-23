@@ -1,4 +1,4 @@
-import pymupdf as fitz  # PyMuPDF (new import name; fitz alias kept so the rest of the file is unchanged)
+import fitz
 from backend.app.models import Page, PageBlock, ParsedDocument, DocumentMetadata
 from backend.app.ingestion.ocr import is_poor_extraction, run_ocr
 import datetime

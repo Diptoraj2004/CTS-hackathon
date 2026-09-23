@@ -58,3 +58,5 @@ chroma_db/
 .idea/
 .DS_Store
 Thumbs.db
+calib/calibration_questions.csv
+calib/calibration_report.json

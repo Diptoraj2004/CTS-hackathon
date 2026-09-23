@@ -24,7 +24,8 @@ def fetch_faers_adverse_events(drug_name: str, timeout: float = 8.0) -> FAERSRes
     """
     drug = drug_name.strip()
     query = f'patient.drug.medicinalproduct:"{drug}"'
-    url = f"{FAERS_ENDPOINT}?search={quote(query, safe=':.\"')}&count=patient.reaction.reactionmeddrapt.exact"
+    encoded_query = quote(query, safe=':."')
+    url = f"{FAERS_ENDPOINT}?search={encoded_query}&count=patient.reaction.reactionmeddrapt.exact"
     try:
         response = requests.get(
             FAERS_ENDPOINT,
