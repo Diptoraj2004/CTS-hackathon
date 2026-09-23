@@ -16,8 +16,8 @@ import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { exampleDrugs } from "../data/medications";
+import { API_BASE, authenticatedFetch } from "../data/api";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
 export const MedicationSelect: React.FC = () => {
   const navigate = useNavigate();
@@ -32,7 +32,7 @@ export const MedicationSelect: React.FC = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch(`${API_BASE}/drugs`)
+    authenticatedFetch(`${API_BASE}/drugs`)
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json();
