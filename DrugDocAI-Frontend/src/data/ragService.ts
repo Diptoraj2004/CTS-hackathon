@@ -216,11 +216,10 @@ function networkErrorResponse(question: string, medication: string, mode: "patie
 export async function getRagResponse(
   question: string,
   medication: string,
-  mode: "patient" | "professional"
+  mode: "patient" | "professional",
+  sessionId = getSessionId()
 ): Promise<RagResponse> {
   const backendMode = mode === "professional" ? "clinician" : "patient";
-
-  const sessionId = getSessionId();
   if (!sessionId) {
     return {
       question,
