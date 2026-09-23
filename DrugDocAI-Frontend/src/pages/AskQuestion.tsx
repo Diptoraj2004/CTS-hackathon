@@ -17,12 +17,16 @@ import {
   FileText,
   AlertTriangle,
   CheckCircle2,
+  History,
+
 } from "lucide-react";
 import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import {
   getRagResponse,
   getChatSession,
+  ChatSessionDetail,
+  ChatSessionSummary,
   RagResponse,
   getDrugProfile,
   DrugProfileResponse,
@@ -31,6 +35,7 @@ import {
   RagSource,
 } from "../data/ragService";
 import { useCurrentUser } from "../hooks/useCurrentUser";
+import { ConversationHistory } from "../components/ConversationHistory";
 
 const NO_INFO = "No verified information available in the current knowledge base.";
 const DISCLAIMER =
@@ -55,6 +60,49 @@ interface TurnItem {
   answerState: "typing" | "revealed";
   ragData: RagResponse | null;
   isEscalated?: boolean;
+}
+
+function hydrateSessionTurns(session: ChatSessionDetail): TurnItem[] {
+  const restored: TurnItem[] = [];
+  const messages = session.messages || [];
+  const fallbackTimestamp = session.updated_at
+    ? new Date(session.updated_at * 1000).toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : "";
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const message = messages[i];
+    if (message.role !== "human" && message.role !== "user") continue;
+
+    const answer = messages[i + 1];
+    if (!answer || (answer.role !== "ai" && answer.role !== "assistant")) continue;
+
+    restored.push({
+      id: String(message.id),
+      question: message.content,
+      timestamp: fallbackTimestamp,
+      isFetching: false,
+      answerState: "revealed",
+      ragData: {
+        question: message.content,
+        medication: session.drug_name || "",
+        mode: "patient",
+        risk_level: "normal",
+        answerLead: answer.content,
+        bulletPoints: [],
+        answerFollowUp: "",
+        disclaimer: DISCLAIMER,
+        confidence: "Medium",
+        confidenceDetail: "Restored from your saved conversation history.",
+        sources: [],
+        requestId: null,
+      },
+    });
+  }
+
+  return restored;
 }
 const CHAT_STORAGE_PREFIX = "drugdoc_chat_turns";
 
@@ -93,6 +141,7 @@ export const AskQuestion: React.FC = () => {
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -116,25 +165,59 @@ export const AskQuestion: React.FC = () => {
 
     let cancelled = false;
     setSessionLoadError(null);
+    setTurns([]);
 
     getChatSession(sessionId)
       .then((session) => {
         if (cancelled) return;
+
         const loadedDrug = session.drug_name || "";
         setSessionDrug(loadedDrug);
-        if (loadedDrug && searchParams.get("drug") !== loadedDrug) {
-          const next = new URLSearchParams(searchParams);
+
+        const next = new URLSearchParams(searchParams);
+        if (loadedDrug && next.get("drug") !== loadedDrug) {
           next.set("drug", loadedDrug);
           setSearchParams(next, { replace: true });
+        }
+
+        const cacheKey = getChatStorageKey(
+          loadedDrug || next.get("drug") || "your-medication",
+          next.get("mode") || mode,
+          sessionId
+        );
+        let restoredFromCache: TurnItem[] = [];
+
+        try {
+          const cached = sessionStorage.getItem(cacheKey);
+          const parsed = cached ? JSON.parse(cached) : null;
+          if (Array.isArray(parsed)) restoredFromCache = parsed;
+        } catch {
+          restoredFromCache = [];
+        }
+
+        if (!cancelled) {
+          setTurns(
+            restoredFromCache.length > 0
+              ? restoredFromCache
+              : hydrateSessionTurns(session)
+          );
         }
       })
       .catch((error) => {
         if (cancelled) return;
-        setSessionLoadError(error instanceof Error ? error.message : "Could not load this conversation.");
+        setSessionLoadError(
+          error instanceof Error
+            ? error.message
+            : "Could not load this conversation."
+        );
       });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [navigate, searchParams, sessionId, setSearchParams]);
+
+
 
   const suggestedQuestions = buildSuggestedQuestions(drug || "your medication");
 
@@ -181,12 +264,16 @@ useEffect(() => {
     }
   }, [turns.length, drug]);
 
-  // Clean any stale URL query params on mount to keep question state transient
+  // Clean transient question-state params without dropping the active session URL.
   useEffect(() => {
     if (searchParams.get("q") || searchParams.get("risk") || searchParams.get("confidence")) {
-      setSearchParams({ drug, mode }, { replace: true });
+      const next = new URLSearchParams(searchParams);
+      next.delete("q");
+      next.delete("risk");
+      next.delete("confidence");
+      setSearchParams(next, { replace: true });
     }
-  }, []);
+  }, [searchParams, setSearchParams]);
 
   // Auto-scroll chat window to bottom when new turns arrive or finishes loading
   useEffect(() => {
@@ -294,6 +381,24 @@ useEffect(() => {
 
   const handleViewDocs = () => {
     navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+  };
+
+  const handleOpenSession = (session: ChatSessionSummary) => {
+    const nextMode = mode;
+    navigate(
+      `/results?session=${encodeURIComponent(session.session_id)}&drug=${encodeURIComponent(session.drug_name || "")}&mode=${nextMode}`
+    );
+    setShowHistory(false);
+  };
+
+  const handleNewChat = () => {
+    setShowHistory(false);
+    navigate("/select");
+  };
+
+  const handleDeletedActive = () => {
+    setShowHistory(false);
+    navigate("/select");
   };
 
   const handleRollover = async () => {
@@ -439,6 +544,15 @@ useEffect(() => {
                   <span className="f03-sel-mode-desc">{modeDesc}</span>
                 </div>
               </div>
+
+              <button
+                className="f03-history-btn"
+                onClick={() => setShowHistory(true)}
+                aria-label="Open previous conversations"
+              >
+                <History size={13} />
+                History
+              </button>
 
               <button
                 className="f03-change-btn"
@@ -1085,6 +1199,16 @@ useEffect(() => {
       <footer className="f03-footer">
         <span>© 2026 DrugDoc AI</span>
       </footer>
+      <ConversationHistory
+        open={showHistory}
+        activeSessionId={sessionId}
+        mode={mode}
+        onClose={() => setShowHistory(false)}
+        onNewChat={handleNewChat}
+        onOpenSession={handleOpenSession}
+        onDeletedActive={handleDeletedActive}
+      />
+
     </AppLayout>
   );
 };
