@@ -27,6 +27,7 @@ DrugDocAI-Frontend/node_modules/
 # Python
 # ─────────────────────────────────────────────
 
+.venv311/
 .venv/
 venv/
 __pycache__/
