@@ -118,8 +118,10 @@ export const MedicationSelect: React.FC = () => {
     setIsCreatingSession(true);
 
     try {
-      await createChatSession(selectedDrug.trim());
-      navigate(`/results?drug=${encodeURIComponent(selectedDrug.trim())}&mode=${selectedMode}`);
+      const session = await createChatSession(selectedDrug.trim());
+      navigate(
+        `/results?session=${encodeURIComponent(session.session_id)}&drug=${encodeURIComponent(selectedDrug.trim())}&mode=${selectedMode}`
+      );
     } catch (error) {
       setSessionError(
         error instanceof Error
