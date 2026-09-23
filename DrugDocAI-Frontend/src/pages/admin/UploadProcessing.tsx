@@ -120,7 +120,7 @@ async function pollJobUntilDone(
 ): Promise<IngestJob> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const res = await fetch(`${API_BASE}/ingest/${jobId}/status`);
+    const res = await adminFetch(`${API_BASE}/ingest/${jobId}/status`);
     if (!res.ok) {
       throw new Error(`Lost track of job ${jobId} (status ${res.status})`);
     }

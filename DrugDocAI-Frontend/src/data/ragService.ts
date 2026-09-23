@@ -3,7 +3,7 @@
 // same RagResponse shape the UI already consumes, so the page components
 // below don't need to change.
 
-const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+import { API_BASE, authenticatedFetch } from "./api";
 
 export interface RagSource {
   id: number;
@@ -206,7 +206,7 @@ export async function getRagResponse(
 
   let res: Response;
   try {
-    res = await fetch(`${API_BASE}/query`, {
+    res = await authenticatedFetch(`${API_BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -370,7 +370,7 @@ export function getDrugProfile(
     return cached;
   }
 
-  const request = fetch(`${API_BASE}/api/drug-profile`, {
+  const request = authenticatedFetch(`${API_BASE}/api/drug-profile`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ drug: normalizedDrug }),
@@ -409,7 +409,7 @@ export async function getContextStatus(
 ): Promise<ContextStatus | null> {
   const id = sId || getSessionId();
   try {
-    const res = await fetch(
+    const res = await authenticatedFetch(
       `${API_BASE}/session/${encodeURIComponent(id)}/context-status`
     );
     if (!res.ok) return null;
@@ -424,7 +424,7 @@ export async function rolloverSession(
 ): Promise<SessionRollover | null> {
   const id = sId || getSessionId();
   try {
-    const res = await fetch(
+    const res = await authenticatedFetch(
       `${API_BASE}/session/${encodeURIComponent(id)}/rollover`,
       {
         method: "POST",

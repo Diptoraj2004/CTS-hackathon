@@ -1,4 +1,4 @@
-import { clearAdminKey, setAuthToken } from "./adminApi";
+import { clearAdminKey, getAuthToken, setAuthToken } from "./adminApi";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -120,6 +120,6 @@ export const mockAuth = {
   },
 
   isAuthenticated: (): boolean => {
-    return !!localStorage.getItem(STORAGE_KEY);
+    return !!getAuthToken() && !!localStorage.getItem(STORAGE_KEY);
   },
 };
