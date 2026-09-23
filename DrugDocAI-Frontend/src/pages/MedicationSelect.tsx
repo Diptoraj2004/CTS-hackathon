@@ -17,6 +17,7 @@ import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { exampleDrugs } from "../data/medications";
 import { API_BASE, authenticatedFetch } from "../data/api";
+import { createChatSession } from "../data/ragService";
 
 
 export const MedicationSelect: React.FC = () => {
@@ -28,6 +29,8 @@ export const MedicationSelect: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [availableDrugs, setAvailableDrugs] = useState<string[]>([]);
   const [drugLoadError, setDrugLoadError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -101,13 +104,31 @@ export const MedicationSelect: React.FC = () => {
     inputRef.current?.focus();
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!selectedDrug.trim()) {
       setShowWarning(true);
       inputRef.current?.focus();
       return;
     }
-    navigate(`/results?drug=${encodeURIComponent(selectedDrug.trim())}&mode=${selectedMode}`);
+
+    if (isCreatingSession) return;
+
+    setShowWarning(false);
+    setSessionError(null);
+    setIsCreatingSession(true);
+
+    try {
+      await createChatSession(selectedDrug.trim());
+      navigate(`/results?drug=${encodeURIComponent(selectedDrug.trim())}&mode=${selectedMode}`);
+    } catch (error) {
+      setSessionError(
+        error instanceof Error
+          ? error.message
+          : "Could not start a new conversation. Please try again."
+      );
+    } finally {
+      setIsCreatingSession(false);
+    }
   };
 
   return (
@@ -291,11 +312,19 @@ export const MedicationSelect: React.FC = () => {
               </div>
             </div>
 
+            {sessionError && (
+              <div className="medication-warning" role="alert">
+                <AlertCircle size={14} />
+                <span>{sessionError}</span>
+              </div>
+            )}
+
             <button
               className="button button-primary button-large f02-continue-btn"
               onClick={handleContinue}
+              disabled={isCreatingSession}
             >
-              Continue <ArrowRight size={18} />
+              {isCreatingSession ? "Starting..." : "Continue"} <ArrowRight size={18} />
             </button>
           </div>
         </div>
