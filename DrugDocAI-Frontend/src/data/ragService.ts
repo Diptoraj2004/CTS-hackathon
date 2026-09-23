@@ -370,7 +370,7 @@ export function getDrugProfile(
     return cached;
   }
 
-  const request = fetch(`${API_BASE}/api/drug-profile`, {
+  const request = authenticatedFetch(`${API_BASE}/api/drug-profile`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ drug: normalizedDrug }),
