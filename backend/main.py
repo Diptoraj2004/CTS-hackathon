@@ -726,6 +726,56 @@ def view_document(filename: str, request: Request, download: bool = False):
     )
 
 
+@app.get("/documents/user-view/{filename}", response_class=FileResponse)
+def view_document_for_user(filename: str, request: Request):
+    """Serve an ingested source document to an authenticated user.
+
+    The main document view/download route remains admin-only. This dedicated
+    route exists so citation links shown in the normal user experience can
+    open the same uploaded evidence without exposing the admin dependency.
+    """
+    user = require_user(request.headers.get("authorization"))
+    if not user:
+        raise HTTPException(status_code=401, detail="A valid bearer token is required.")
+
+    safe_filename = os.path.basename(filename)
+    file_path = (UPLOAD_DIR / safe_filename).resolve()
+
+    if not str(file_path).startswith(str(UPLOAD_DIR.resolve()) + os.sep):
+        audit_log.log(
+            "UNAUTHORIZED_FILE_ACCESS",
+            f"attempted_file={safe_filename}",
+            ip=_client_ip(request),
+            status="BLOCKED",
+        )
+        raise HTTPException(status_code=403, detail="Access denied.")
+
+    if not file_path.is_file():
+        candidates = list(UPLOAD_DIR.glob(f"*_{safe_filename}"))
+        if candidates and candidates[0].is_file():
+            file_path = candidates[0]
+        else:
+            raise HTTPException(status_code=404, detail="Document not found.")
+
+    media_type, _ = mimetypes.guess_type(str(file_path))
+    if not media_type:
+        media_type = "application/octet-stream"
+
+    audit_log.log(
+        "DOCUMENT_VIEWED",
+        f"filename={safe_filename}",
+        ip=_client_ip(request),
+        resource=f"document:{safe_filename}",
+        status="SUCCESS",
+    )
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+    )
+
+
 @app.delete("/documents/{filename}", dependencies=[Depends(require_admin_key)])
 def delete_document(filename: str, request: Request):
     safe_filename = os.path.basename(filename)
