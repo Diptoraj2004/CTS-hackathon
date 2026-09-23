@@ -155,7 +155,7 @@ export const AskQuestion: React.FC = () => {
 });
 useEffect(() => {
   try {
-    const key = getChatStorageKey(drug, mode);
+    const key = getChatStorageKey(drug, mode, sessionId);
     if (sessionId) sessionStorage.setItem(key, JSON.stringify(turns));
   } catch {
     // Ignore storage failures.
