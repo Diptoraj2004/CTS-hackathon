@@ -17,10 +17,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from backend.app.ingestion.export_to_rag_store import parse_url_and_chunk, store_chunks
 from backend.app.ingestion.upload_dispatcher import SUPPORTED_SUFFIXES, parse_upload
 from backend.analytics import (history, recent_activity, record_processed,
-                                record_query, record_source_usage, record_upload)
+                               record_query, record_source_usage, record_upload)
 from backend.ingest_jobs import create_job, get_job, update_job
 from backend.paths import DATA_DIR
 from backend.rag import query_understanding
+from backend.rag import user_sessions
 from backend.rag.context_summarizer import summarize_session
 from backend.rag.drug_aliases import normalize_drug_name
 from backend.rag.drug_profile import build_profile
@@ -30,7 +31,7 @@ from backend.rag.vector_store import (delete_by_source_file, distinct_values,
                                       document_records, get_embedder, get_table)
 from backend.safety import injection_guard, redaction
 from backend.safety.audit_log import AuditLog
-from backend.safety.auth import require_admin_key, set_audit_logger
+from backend.safety.auth import require_admin_key, require_user, set_audit_logger
 from backend.safety.auth_store import (authenticate, consume_oauth_state,
                                        create_oauth_state, create_user,
                                        delete_user, initialize, issue_token, oauth_user)
@@ -38,13 +39,36 @@ from backend.safety.gate_router import check_mode_consistency
 from backend.safety.rate_limit import RateLimitMiddleware
 from backend.safety.review_queue import HumanReviewQueue
 from backend.rag.schemas import ContextStatus, DrugProfile, SessionRollover
-from backend.safety.schemas import (ChatbotResponse, DrugProfileRequest, LoginRequest, QueryRequest,
-                                    RegisterRequest, ReviewResolution)
+from backend.safety.schemas import (
+    ChatbotResponse,
+    DrugProfileRequest,
+    LoginRequest,
+    QueryRequest,
+    RegisterRequest,
+    ReviewResolution,
+    CreateSessionRequest,
+    ChatSessionSummary,
+    ChatSessionDetail,
+    DeleteSessionResponse,
+)
 
 app = FastAPI(title="DrugDocQA Core API", version="0.8")
 
 app.add_middleware(RateLimitMiddleware)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True,
+)
 
 
 @app.middleware("http")
@@ -79,9 +103,6 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
-# Bounded: unbounded threading.Thread-per-upload meant N concurrent /ingest
-# calls spawned N CPU-heavy parse/embed threads at once. 3 workers queue the
-# rest instead of piling on.
 _ingest_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ingest")
 
 
@@ -117,13 +138,122 @@ def register_user(body: RegisterRequest):
     return {"user": user, "token": token}
 
 
+# ============================================================
+# AUTHENTICATED USER-OWNED CHAT SESSIONS
+# ============================================================
+
+@app.post("/sessions", response_model=ChatSessionSummary)
+def create_chat_session(
+    body: CreateSessionRequest,
+    user: dict = Depends(require_user),
+):
+    drug_name = None
+
+    if body.drug_name:
+        try:
+            normalized = normalize_drug_name(body.drug_name)
+        except Exception:
+            normalized = ""
+
+        if not normalized:
+            raise HTTPException(status_code=400, detail="Invalid drug name.")
+
+        try:
+            known = query_understanding.known_drugs()
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Drug catalogue is temporarily unavailable.",
+            ) from exc
+
+        if normalized not in known:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected medicine is not available in the current drug catalogue.",
+            )
+
+        drug_name = normalized
+
+    session = user_sessions.create_session(
+        user_id=str(user["id"]),
+        drug_name=drug_name,
+        title=body.title,
+    )
+
+    return session
+
+
+@app.get("/sessions", response_model=list[ChatSessionSummary])
+def list_chat_sessions(
+    user: dict = Depends(require_user),
+):
+    return user_sessions.list_sessions(str(user["id"]))
+
+
+@app.get("/sessions/{session_id}", response_model=ChatSessionDetail)
+def get_chat_session(
+    session_id: str,
+    user: dict = Depends(require_user),
+):
+    session = user_sessions.get_session(
+        str(user["id"]),
+        session_id,
+    )
+
+    if session is None:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
+    return session
+
+
+@app.delete("/sessions/{session_id}", response_model=DeleteSessionResponse)
+def delete_chat_session(
+    session_id: str,
+    user: dict = Depends(require_user),
+):
+    deleted = user_sessions.delete_session(
+        str(user["id"]),
+        session_id,
+    )
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
+    return {
+        "session_id": session_id,
+        "deleted": True,
+    }
+
+
 @app.get("/session/{session_id}/context-status", response_model=ContextStatus)
-def session_context_status(session_id: str):
+def session_context_status(
+    session_id: str,
+    user: dict = Depends(require_user),
+):
+    try:
+        user_sessions.require_owned_session(
+            str(user["id"]),
+            session_id,
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
     return query_understanding.context_status(session_id)
 
 
 @app.post("/session/{session_id}/summarize")
-def summarize_chat_session(session_id: str):
+def summarize_chat_session(
+    session_id: str,
+    user: dict = Depends(require_user),
+):
+    try:
+        user_sessions.require_owned_session(
+            str(user["id"]),
+            session_id,
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
     try:
         summary = summarize_session(session_id)
     except ValueError as exc:
@@ -138,7 +268,18 @@ def summarize_chat_session(session_id: str):
 
 
 @app.post("/session/{session_id}/rollover", response_model=SessionRollover)
-def rollover_chat_session(session_id: str):
+def rollover_chat_session(
+    session_id: str,
+    user: dict = Depends(require_user),
+):
+    try:
+        user_sessions.require_owned_session(
+            str(user["id"]),
+            session_id,
+        )
+    except PermissionError:
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
     try:
         summary = summarize_session(session_id)
     except ValueError as exc:
@@ -146,7 +287,11 @@ def rollover_chat_session(session_id: str):
     except GenerationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    new_session_id = query_understanding.create_rollover_session(session_id, summary)
+    new_session_id = query_understanding.create_rollover_session(
+        session_id,
+        summary,
+        user_id=str(user["id"]),
+    )
     prompt = (
         "Continue our conversation using this retained context. Do not repeat the "
         "summary; answer my next question using it where relevant.\n\n"
@@ -222,26 +367,53 @@ def google_auth_callback(code: str | None = None, state: str | None = None,
 
 
 def _escalate(query: str, mode: str, reason: str, risk_level: str, ip: str | None,
+              user_id: str | None = None, session_id: str | None = None,
               answer: str = "") -> ChatbotResponse:
     if risk_level == "none" or reason in {"PROMPT_INJECTION", "CORPUS_INJECTION"} or reason.startswith("PROMPT_INJECTION"):
         # Off-topic and prompt-injection blocks are not medical review cases.
         return ChatbotResponse(mode=mode, answer=answer, status="ESCALATED",
                                reason=reason, risk_level=risk_level, request_id=None)
-    result = review_queue.flag(query, mode, reason)
+    
+    # Securely bind the escalation record to the authenticated user and their active session
+    result = review_queue.flag(query, mode, reason, user_id=user_id, session_id=session_id)
     return ChatbotResponse(mode=mode, answer=answer, status="ESCALATED",
                            reason=reason, risk_level=risk_level, request_id=result["request_id"])
 
 
 @app.post("/query", response_model=ChatbotResponse)
-def process_query(req: QueryRequest, request: Request):
+def process_query(
+    req: QueryRequest,
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    import time
+
+    request_started = time.perf_counter()
+
+    # user_id comes ONLY from the verified bearer token.
+    authenticated_user_id = str(user["id"])
+
+    try:
+        user_sessions.require_owned_session(
+            authenticated_user_id,
+            req.session_id,
+        )
+    except PermissionError:
+        # Deliberately use 404 instead of 403 so attackers cannot probe
+        # whether a session_id exists for another account.
+        raise HTTPException(status_code=404, detail="Chat session not found.")
+
+    user_sessions.touch(
+        authenticated_user_id,
+        req.session_id,
+    )
+
     ip = _client_ip(request)
 
     if injection_guard.looks_like_injection(req.query):
         audit_log.log("INJECTION_BLOCKED", req.query[:200], ip=ip, status="BLOCKED")
         record_query("ESCALATED")
-        # Injection is a policy block, not a medical escalation. It must not
-        # produce the same doctor/pharmacist advice or enter the human medical
-        # review queue. Return the same structured contract as normal answers.
+        # Injection is a policy block, not a medical escalation.
         return ChatbotResponse(
             mode=req.mode,
             answer="This request was blocked because it contains instructions that attempt to alter the assistant's operating rules. Please submit a medication question instead.",
@@ -261,10 +433,55 @@ def process_query(req: QueryRequest, request: Request):
     needs_review, reason = check_mode_consistency(req.query, req.mode)
     if needs_review:
         record_query("ESCALATED")
-        return _escalate(req.query, req.mode, reason, risk_level="high", ip=ip)
+        return _escalate(req.query, req.mode, reason, risk_level="high", ip=ip,
+                         user_id=authenticated_user_id, session_id=req.session_id)
+
+    conversational = {
+        "hi": "Hello! How can I help you with your medication question?",
+        "hello": "Hello! How can I help you with your medication question?",
+        "good morning": "Good morning! How can I help you with your medication question?",
+        "good afternoon": "Good afternoon! How can I help you with your medication question?",
+        "good evening": "Good evening! How can I help you with your medication question?",
+        "thanks": "You're welcome!",
+        "thank you": "You're welcome!",
+        "bye": "Goodbye! Take care.",
+    }
+
+    conversational_key = " ".join(req.query.strip().lower().split())
+
+    if conversational_key in conversational:
+        answer_text = conversational[conversational_key]
+
+        history = query_understanding.get_history(req.session_id)
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        history.add_message(
+            HumanMessage(
+                content=req.query,
+                additional_kwargs={},
+            )
+        )
+        history.add_message(AIMessage(content=answer_text))
+        query_understanding._save_history(req.session_id, history)
+
+        elapsed_ms = round((time.perf_counter() - request_started) * 1000, 2)
+        print(f"[latency] total_ms={elapsed_ms} auth_session_ms=excluded rag=false faers=false llm=false conversational=true")
+        record_query("ANSWERED")
+
+        return ChatbotResponse(
+            mode=req.mode, answer=answer_text, status="ANSWERED",
+            confidence=1.0, confidence_bucket="high", reason="CONVERSATIONAL",
+            risk_level="none", request_id=None, intent="CONVERSATIONAL",
+            intent_confidence=1.0, retrieval_used=False, history_used=False, faers_used=False,
+        )
 
     try:
-        result = rag_answer(req.query, mode=req.mode, session_id=req.session_id, drug_hint=req.drug_name)
+        result = rag_answer(
+            req.query,
+            mode=req.mode,
+            session_id=req.session_id,
+            drug_hint=req.drug_name,
+        )
     except GenerationError as e:
         audit_log.log("GENERATION_FAILED", f"session={req.session_id}: {e}", ip=ip, status="FAILED")
         raise HTTPException(status_code=503, detail="The answer generator is unavailable right now.")
@@ -279,6 +496,9 @@ def process_query(req: QueryRequest, request: Request):
             retrieval_used=result.retrieval_used, history_used=result.history_used,
             faers_used=result.faers_used, quality_metrics=result.quality_metrics,
         )
+
+    elapsed_ms = round((time.perf_counter() - request_started) * 1000, 2)
+    print(f"[latency] total_ms={elapsed_ms} retrieval_used={result.retrieval_used} faers_used={result.faers_used} history_used={result.history_used} llm=true")
 
     audit_log.log("QUERY_ANSWERED", f"session={req.session_id}", ip=ip, status="SUCCESS")
     record_query(result.status)
@@ -314,13 +534,10 @@ def _run_ingestion(job_id: str, stored_path: Path, drug_name: str, doc_id: str |
     try:
         update_job(job_id, stage="PARSING", detail="Parsing and chunking the document.")
         chunks = parse_upload(str(stored_path), doc_id=doc_id, drug_name=drug_name,
-                      original_filename=original_filename)
+                              original_filename=original_filename)
         update_job(job_id, chunks_found=len(chunks))
 
         if len(chunks) == 0:
-            # Previously: 0 chunks (blank/unreadable PDF, OCR failed on
-            # every page) still ended in STORED with chunks_stored=0 — a
-            # silent success for a document that contributed nothing.
             detail = "No extractable text — parsing and OCR both produced nothing usable."
             audit_log.log("INGESTION_FAILED", f"file={original_filename}: {detail}",
                           resource=f"document:{original_filename}", status="FAILED")
@@ -428,13 +645,13 @@ def ingest_url(url: str, drug_name: str, request: Request, doc_id: str | None = 
     return {"job_id": job["job_id"], "status": "QUEUED", "source": "brand_site"}
 
 
-
-@app.get("/ingest/{job_id}/status")
+@app.get("/ingest/{job_id}/status", dependencies=[Depends(require_admin_key)])
 def ingest_status(job_id: str):
     job = get_job(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="unknown job id")
     return job
+
 
 @app.get("/documents/{filename}/download", dependencies=[Depends(require_admin_key)])
 def download_document(filename: str, request: Request):
@@ -468,7 +685,8 @@ def download_document(filename: str, request: Request):
         },
     )
     
-@app.get("/documents/{filename}/view")
+
+@app.get("/documents/{filename}/view", dependencies=[Depends(require_admin_key)])
 def view_document(filename: str, request: Request, download: bool = False):
     safe_filename = os.path.basename(filename)
     file_path = (UPLOAD_DIR / safe_filename).resolve()
@@ -481,7 +699,6 @@ def view_document(filename: str, request: Request, download: bool = False):
         )
         raise HTTPException(status_code=403, detail="Access denied.")
     if not file_path.is_file():
-        # Fallback: check if the file exists with a job prefix (e.g. {job_id[:8]}_{filename})
         candidates = list(UPLOAD_DIR.glob(f"*_{safe_filename}"))
         if candidates and candidates[0].is_file():
             file_path = candidates[0]
@@ -532,12 +749,12 @@ def _json_safe_records(df):
     return df.astype(object).where(df.notna(), None).to_dict(orient="records")
 
 
-@app.get("/sources")
+@app.get("/sources", dependencies=[Depends(require_user)])
 def list_sources():
     return document_records()
 
 
-@app.get("/sources/{drug_name}")
+@app.get("/sources/{drug_name}", dependencies=[Depends(require_user)])
 def sources_for_drug(drug_name: str):
     return [item for item in document_records()
             if item["drug_name"].lower() == drug_name.lower()]
@@ -561,9 +778,10 @@ def list_documents(page: int = 1, page_size: int = 25, drug: str | None = None,
             "page_size": page_size, "total": len(documents)}
 
 
-@app.get("/drugs")
+@app.get("/drugs", dependencies=[Depends(require_user)])
 def list_drugs():
     return {"drugs": query_understanding.known_drugs()}
+
 
 @app.get("/review/pending", dependencies=[Depends(require_admin_key)])
 def pending_reviews():
@@ -571,21 +789,15 @@ def pending_reviews():
 
 
 @app.get("/review/{request_id}")
-def get_review(request_id: str):
-    # No admin key: a user needs to poll their own escalation's status.
+def get_review(request_id: str, user: dict = Depends(require_user)):
     try:
-        return review_queue.get(request_id)
+        review = review_queue.get(request_id)
+        # Prevent leaking the existence of another user's review by returning a standard 404
+        if review.get("user_id") and review["user_id"] != str(user["id"]):
+            raise KeyError
+        return review
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown request id")
-
-
-@app.delete("/session/{session_id}")
-def forget_session(session_id: str, request: Request):
-    # No admin key: a user must be able to erase their own session.
-    cleared = query_understanding.forget(session_id)
-    audit_log.log("SESSION_ERASURE_REQUESTED", f"session={session_id}",
-                  ip=_client_ip(request), resource=f"session:{session_id}", status="SUCCESS")
-    return {"status": "ACKNOWLEDGED", "cleared": cleared}
 
 
 @app.post("/review/{request_id}", dependencies=[Depends(require_admin_key)])
@@ -606,7 +818,6 @@ def verify_audit(request: Request):
         status="SUCCESS" if ok else "FAILED",
     )
     return {"valid": ok, "message": msg, "entries": len(audit_log)}
-
 
 
 @app.get("/redaction/status", dependencies=[Depends(require_admin_key)])

@@ -48,3 +48,28 @@ class ReviewResolution(BaseModel):
 class ChatbotResponse(RAGResponse):
     """RAGResponse plus a request_id, so the frontend can poll a pending review."""
     request_id: Optional[str] = None
+
+
+class CreateSessionRequest(BaseModel):
+    """Create a chat owned by the authenticated bearer-token user."""
+
+    drug_name: Optional[str] = None
+    title: Optional[str] = None
+
+
+class ChatSessionSummary(BaseModel):
+    session_id: str
+    title: str
+    drug_name: Optional[str] = None
+    created_at: float
+    updated_at: float
+    message_count: int
+
+
+class ChatSessionDetail(ChatSessionSummary):
+    messages: list[dict]
+
+
+class DeleteSessionResponse(BaseModel):
+    session_id: str
+    deleted: bool

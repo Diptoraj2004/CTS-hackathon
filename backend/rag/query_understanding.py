@@ -41,41 +41,103 @@ _sessions_lock = threading.Lock()
 
 def _session_connection() -> sqlite3.Connection:
     path = os.getenv("SESSION_DB_PATH", str(SESSION_DB_PATH))
+
     connection = sqlite3.connect(path, timeout=10)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA journal_mode=WAL")
-    connection.execute("""CREATE TABLE IF NOT EXISTS chat_sessions (
-        session_id TEXT PRIMARY KEY,
-        last_used REAL NOT NULL,
-        summary TEXT,
-        parent_session_id TEXT,
-        summary_tokens INTEGER NOT NULL DEFAULT 0,
-        rolled_over_at REAL
-    )""")
-    connection.execute("""CREATE TABLE IF NOT EXISTS chat_messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        additional_json TEXT NOT NULL DEFAULT '{}'
-    )""")
-    connection.execute("""CREATE TABLE IF NOT EXISTS response_cache (
-        session_id TEXT NOT NULL,
-        normalized_query TEXT NOT NULL,
-        response_json TEXT NOT NULL,
-        created_at REAL NOT NULL,
-        PRIMARY KEY(session_id, normalized_query)
-    )""")
-    for statement in (
-        "ALTER TABLE chat_sessions ADD COLUMN summary TEXT",
-        "ALTER TABLE chat_sessions ADD COLUMN parent_session_id TEXT",
-        "ALTER TABLE chat_sessions ADD COLUMN summary_tokens INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE chat_sessions ADD COLUMN rolled_over_at REAL",
-    ):
-        try:
-            connection.execute(statement)
-        except sqlite3.OperationalError:
-            pass
+
+    # ------------------------------------------------------------------
+    # Shared chat-session schema
+    # ------------------------------------------------------------------
+    # Keep this schema compatible with backend.rag.user_sessions.
+    # query_understanding may be the first module touching the database,
+    # so it must be able to initialize/migrate the complete schema itself.
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            session_id TEXT PRIMARY KEY,
+            last_used REAL NOT NULL,
+            summary TEXT,
+            parent_session_id TEXT,
+            summary_tokens INTEGER NOT NULL DEFAULT 0,
+            rolled_over_at REAL,
+            user_id TEXT,
+            title TEXT,
+            drug_name TEXT,
+            created_at REAL,
+            updated_at REAL
+        )
+        """
+    )
+
+    # Existing databases may have been created before the newer
+    # authenticated-session fields existed.
+    migrations = [
+        ("summary", "TEXT"),
+        ("parent_session_id", "TEXT"),
+        ("summary_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("rolled_over_at", "REAL"),
+        ("user_id", "TEXT"),
+        ("title", "TEXT"),
+        ("drug_name", "TEXT"),
+        ("created_at", "REAL"),
+        ("updated_at", "REAL"),
+    ]
+
+    existing_columns = {
+        row["name"]
+        for row in connection.execute(
+            "PRAGMA table_info(chat_sessions)"
+        ).fetchall()
+    }
+
+    for column, definition in migrations:
+        if column not in existing_columns:
+            connection.execute(
+                f"ALTER TABLE chat_sessions ADD COLUMN {column} {definition}"
+            )
+
+    # Preserve legacy anonymous sessions.
+    #
+    # We deliberately DO NOT assign an existing session to any user.
+    # This prevents an old anonymous conversation from accidentally
+    # becoming visible to the first authenticated user.
+    connection.execute(
+        """
+        UPDATE chat_sessions
+        SET created_at = COALESCE(created_at, last_used),
+            updated_at = COALESCE(updated_at, last_used)
+        WHERE created_at IS NULL
+           OR updated_at IS NULL
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            additional_json TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS response_cache (
+            session_id TEXT NOT NULL,
+            normalized_query TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at REAL NOT NULL,
+            PRIMARY KEY(session_id, normalized_query)
+        )
+        """
+    )
+
+    connection.commit()
+
     return connection
 
 
@@ -120,13 +182,52 @@ def context_status(session_id: str) -> dict:
     }
 
 
-def create_rollover_session(source_session_id: str, summary: str) -> str:
+def create_rollover_session(source_session_id: str, summary: str, user_id: str | None = None) -> str:
     new_session_id = str(uuid.uuid4())
     now = time.time()
     connection = _session_connection()
     connection.execute(
-        "INSERT INTO chat_sessions(session_id, last_used, summary, parent_session_id, summary_tokens, rolled_over_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (new_session_id, now, summary, source_session_id, estimate_tokens(summary), now),
+        """
+        INSERT INTO chat_sessions(
+            session_id,
+            last_used,
+            summary,
+            parent_session_id,
+            summary_tokens,
+            rolled_over_at,
+            user_id,
+            title,
+            drug_name,
+            created_at,
+            updated_at
+        )
+        SELECT
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            ?,
+            title,
+            drug_name,
+            ?,
+            ?
+        FROM chat_sessions
+        WHERE session_id = ?
+        """,
+        (
+            new_session_id,
+            now,
+            summary,
+            source_session_id,
+            estimate_tokens(summary),
+            now,
+            user_id,
+            now,
+            now,
+            source_session_id,
+        ),
     )
     connection.commit()
     connection.close()
