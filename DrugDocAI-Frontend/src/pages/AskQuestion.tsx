@@ -62,7 +62,10 @@ interface TurnItem {
   isEscalated?: boolean;
 }
 
-function hydrateSessionTurns(session: ChatSessionDetail): TurnItem[] {
+function hydrateSessionTurns(
+  session: ChatSessionDetail,
+  mode: "patient" | "professional"
+): TurnItem[] {
   const restored: TurnItem[] = [];
   const messages = session.messages || [];
   const fallbackTimestamp = session.updated_at
@@ -88,7 +91,7 @@ function hydrateSessionTurns(session: ChatSessionDetail): TurnItem[] {
       ragData: {
         question: message.content,
         medication: session.drug_name || "",
-        mode: "patient",
+        mode,
         risk_level: "normal",
         answerLead: answer.content,
         bulletPoints: [],
@@ -199,7 +202,7 @@ export const AskQuestion: React.FC = () => {
           setTurns(
             restoredFromCache.length > 0
               ? restoredFromCache
-              : hydrateSessionTurns(session)
+              : hydrateSessionTurns(session, mode)
           );
         }
       })
@@ -215,7 +218,7 @@ export const AskQuestion: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [navigate, searchParams, sessionId, setSearchParams]);
+  }, [navigate, searchParams, sessionId, mode, setSearchParams]);
 
 
 
