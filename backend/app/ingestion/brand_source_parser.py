@@ -43,7 +43,12 @@ def _validate_remote_url(url: str) -> None:
 
 
 def _fetch_remote(url: str):
-    """Fetch with bounded, revalidated redirects to prevent SSRF via redirects."""
+    """Fetch with bounded, revalidated redirects to prevent SSRF via redirects.
+
+    Returns (response, final_url, session). The caller owns the session and
+    the final response and is responsible for closing both -- every
+    intermediate redirect response along the way is already closed here.
+    """
     current = url
     session = requests.Session()
     session.trust_env = False
@@ -61,7 +66,7 @@ def _fetch_remote(url: str):
                 current = urllib.parse.urljoin(current, location)
                 continue
             response.raise_for_status()
-            return response, current
+            return response, current, session
         raise ValueError("Brand source exceeded the permitted redirect limit.")
     except Exception:
         session.close()
@@ -70,18 +75,25 @@ def _fetch_remote(url: str):
 
 class BrandSourceParser:
     def parse(self, url: str, doc_id: str | None, drug_name: str) -> ParsedDocument:
-        response, final_url = _fetch_remote(url)
-        url = final_url
-        content_type = response.headers.get("content-type", "").lower()
-        suffix = os.path.splitext(url.split("?", 1)[0])[1].lower()
-        if "pdf" in content_type or suffix == ".pdf":
-            return self._parse_pdf(response, url, doc_id, drug_name)
-        if "html" not in content_type and content_type:
-            raise ValueError(f"Unsupported brand-source content type: {content_type}")
-        content = b"".join(response.iter_content(chunk_size=1024 * 1024))
-        if len(content) > MAX_DOWNLOAD_BYTES:
-            raise ValueError("Brand-source HTML exceeds the permitted size limit.")
-        return self._parse_html(content, url, doc_id, drug_name)
+        # _fetch_remote's own session/response are only closed on its internal
+        # error path; the final, successfully-returned response was leaking
+        # here on every call that actually worked. Close both unconditionally.
+        response, final_url, session = _fetch_remote(url)
+        try:
+            url = final_url
+            content_type = response.headers.get("content-type", "").lower()
+            suffix = os.path.splitext(url.split("?", 1)[0])[1].lower()
+            if "pdf" in content_type or suffix == ".pdf":
+                return self._parse_pdf(response, url, doc_id, drug_name)
+            if "html" not in content_type and content_type:
+                raise ValueError(f"Unsupported brand-source content type: {content_type}")
+            content = b"".join(response.iter_content(chunk_size=1024 * 1024))
+            if len(content) > MAX_DOWNLOAD_BYTES:
+                raise ValueError("Brand-source HTML exceeds the permitted size limit.")
+            return self._parse_html(content, url, doc_id, drug_name)
+        finally:
+            response.close()
+            session.close()
 
     @staticmethod
     def _parse_html(content: bytes, url: str, doc_id: str | None,
