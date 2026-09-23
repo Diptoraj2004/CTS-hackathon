@@ -22,7 +22,7 @@ import { Header } from "../components/Header";
 import { AppLayout } from "../layouts/AppLayout";
 import {
   getRagResponse,
-  getSessionId,
+  getChatSession,
   RagResponse,
   getDrugProfile,
   DrugProfileResponse,
@@ -58,8 +58,8 @@ interface TurnItem {
 }
 const CHAT_STORAGE_PREFIX = "drugdoc_chat_turns";
 
-function getChatStorageKey(drug: string, mode: string): string {
-  return `${CHAT_STORAGE_PREFIX}:${drug.toLowerCase()}:${mode}`;
+function getChatStorageKey(drug: string, mode: string, sessionId: string | null): string {
+  return CHAT_STORAGE_PREFIX + ":" + (sessionId || "no-session") + ":" + drug.toLowerCase() + ":" + mode;
 }
 // ── Typing dots animation component ──────────────────────────────────────────
 const TypingDots: React.FC = () => (
@@ -86,11 +86,13 @@ export const AskQuestion: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useCurrentUser();
 
-  const drug = searchParams.get("drug") || "Amoxicillin";
+  const sessionId = searchParams.get("session");
+  const [sessionDrug, setSessionDrug] = useState("");
+  const drug = searchParams.get("drug") || sessionDrug;
   const mode = (searchParams.get("mode") || (user?.role === "doctor" ? "professional" : "patient")) as "patient" | "professional";
-  const sessionId = getSessionId();
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
+  const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -109,15 +111,37 @@ export const AskQuestion: React.FC = () => {
   useEffect(() => {
     if (!sessionId) {
       navigate("/select", { replace: true });
+      return;
     }
-  }, [navigate, sessionId]);
 
-  const suggestedQuestions = buildSuggestedQuestions(drug);
+    let cancelled = false;
+    setSessionLoadError(null);
+
+    getChatSession(sessionId)
+      .then((session) => {
+        if (cancelled) return;
+        const loadedDrug = session.drug_name || "";
+        setSessionDrug(loadedDrug);
+        if (loadedDrug && searchParams.get("drug") !== loadedDrug) {
+          const next = new URLSearchParams(searchParams);
+          next.set("drug", loadedDrug);
+          setSearchParams(next, { replace: true });
+        }
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setSessionLoadError(error instanceof Error ? error.message : "Could not load this conversation.");
+      });
+
+    return () => { cancelled = true; };
+  }, [navigate, searchParams, sessionId, setSearchParams]);
+
+  const suggestedQuestions = buildSuggestedQuestions(drug || "your medication");
 
   // Conversation history turns
   const [turns, setTurns] = useState<TurnItem[]>(() => {
   try {
-    const key = getChatStorageKey(drug, mode);
+    const key = getChatStorageKey(drug, mode, sessionId);
     const stored = sessionStorage.getItem(key);
 
     if (!stored) return [];
@@ -132,11 +156,11 @@ export const AskQuestion: React.FC = () => {
 useEffect(() => {
   try {
     const key = getChatStorageKey(drug, mode);
-    sessionStorage.setItem(key, JSON.stringify(turns));
+    if (sessionId) sessionStorage.setItem(key, JSON.stringify(turns));
   } catch {
     // Ignore storage failures.
   }
-}, [turns, drug, mode]);
+}, [turns, drug, mode, sessionId]);
   const [nearLimit, setNearLimit] = useState(false);
   const [isRollingOver, setIsRollingOver] = useState(false);
   const [rolloverNotice, setRolloverNotice] = useState<string | null>(null);
@@ -273,10 +297,16 @@ useEffect(() => {
   };
 
   const handleRollover = async () => {
+    if (!sessionId) return;
     setIsRollingOver(true);
     const res = await rolloverSession(sessionId);
     setIsRollingOver(false);
     if (res) {
+      const next = new URLSearchParams(searchParams);
+      next.set("session", res.new_session_id);
+      if (drug) next.set("drug", drug);
+      next.set("mode", mode);
+      setSearchParams(next, { replace: true });
       setNearLimit(false);
       setRolloverNotice("Session context limit reached. Rolled over to a new session with retained context summary.");
       setTimeout(() => setRolloverNotice(null), 8000);
@@ -379,6 +409,11 @@ useEffect(() => {
         {/* ── CENTER COLUMN ─────────────────────────────────────────────── */}
         <div className="f03-center-col">
           <div className="f03-chat-card f04-card-main">
+            {sessionLoadError && (
+              <div role="alert" style={{ padding: "12px 20px", color: "var(--orange-700, #b45309)" }}>
+                {sessionLoadError}
+              </div>
+            )}
             {/* 1. Selected medication + mode bar */}
             <div className="f03-selection-bar">
               <div className="f03-sel-drug">
