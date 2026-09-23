@@ -16,6 +16,7 @@ export function setAuthToken(token: string): void {
 
 export function clearAuthSession(): void {
   sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem("drugdoc_session_id");
   localStorage.removeItem(USER_KEY);
 }
 

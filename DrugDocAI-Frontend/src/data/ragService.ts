@@ -55,39 +55,55 @@ export interface RagResponse {
 const DISCLAIMER =
   "This information is from official medical sources and is not a substitute for professional medical advice.";
 
-// crypto.randomUUID() only exists in "secure contexts" (HTTPS or localhost).
-// A demo served over plain HTTP on a LAN (a common "point a laptop at it"
-// setup) throws here on every single call, breaking every query. This
-// fallback is not cryptographically strong, which is fine — it's a
-// throwaway per-tab session key, not a security token.
-function makeUuid(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    try {
-      return crypto.randomUUID();
-    } catch {
-      // fall through to the manual version below (insecure-context throw)
-    }
-  }
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
-export function getSessionId(): string {
-  const key = "drugdoc_session_id";
-  let id = sessionStorage.getItem(key);
-  if (!id) {
-    id = makeUuid();
-    sessionStorage.setItem(key, id);
-  }
-  return id;
+// The active session id is created by the authenticated backend.
+// sessionStorage is only a convenient browser cache for that server-owned id.
+export function getSessionId(): string | null {
+  return sessionStorage.getItem("drugdoc_session_id");
 }
 
 export function setSessionId(newId: string): void {
-  const key = "drugdoc_session_id";
-  sessionStorage.setItem(key, newId);
+  sessionStorage.setItem("drugdoc_session_id", newId);
+}
+
+export interface ChatSessionSummary {
+  session_id: string;
+  title: string;
+  drug_name?: string | null;
+  created_at: number;
+  updated_at: number;
+  message_count: number;
+}
+
+export async function createChatSession(
+  drugName: string
+): Promise<ChatSessionSummary> {
+  const normalizedDrug = drugName.trim();
+  if (!normalizedDrug) {
+    throw new Error("Please select a medication before continuing.");
+  }
+
+  const response = await authenticatedFetch(API_BASE + "/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ drug_name: normalizedDrug }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.detail === "string"
+        ? data.detail
+        : "Could not create a chat session (HTTP " + response.status + ")."
+    );
+  }
+
+  if (!data?.session_id) {
+    throw new Error("The server did not return a chat session ID.");
+  }
+
+  setSessionId(data.session_id);
+  return data as ChatSessionSummary;
 }
 
 
@@ -204,13 +220,31 @@ export async function getRagResponse(
 ): Promise<RagResponse> {
   const backendMode = mode === "professional" ? "clinician" : "patient";
 
+  const sessionId = getSessionId();
+  if (!sessionId) {
+    return {
+      question,
+      medication,
+      mode,
+      risk_level: "normal",
+      answerLead: "No active conversation session.",
+      bulletPoints: [],
+      answerFollowUp: "Please return to medication selection and start a new conversation.",
+      disclaimer: DISCLAIMER,
+      confidence: "Low",
+      confidenceDetail: "The server-owned chat session is missing.",
+      sources: [],
+      requestId: null,
+    };
+  }
+
   let res: Response;
   try {
     res = await authenticatedFetch(`${API_BASE}/query`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        session_id: getSessionId(),
+        session_id: sessionId,
         query: question,
         mode: backendMode,
         // Previously never sent — the selected drug (from the medication
@@ -408,6 +442,7 @@ export async function getContextStatus(
   sId?: string
 ): Promise<ContextStatus | null> {
   const id = sId || getSessionId();
+  if (!id) return null;
   try {
     const res = await authenticatedFetch(
       `${API_BASE}/session/${encodeURIComponent(id)}/context-status`
@@ -423,6 +458,7 @@ export async function rolloverSession(
   sId?: string
 ): Promise<SessionRollover | null> {
   const id = sId || getSessionId();
+  if (!id) return null;
   try {
     const res = await authenticatedFetch(
       `${API_BASE}/session/${encodeURIComponent(id)}/rollover`,
