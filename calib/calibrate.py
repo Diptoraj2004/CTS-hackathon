@@ -80,8 +80,8 @@ def retrieval_metrics(cases: list[dict], top_k: int, section_boost: float,
             elif case.get("category") == "contextual_rag":
                 understand("Tell me about metformin.", mode=case.get("mode", "patient"), session_id=session)
                 remember_answer(session, "Metformin is used with diet and exercise to improve glycemic control.")
-            decision = classify(case["query"], session_id=session, drug_hint=case.get("drug") or None)
-            info = understand(case["query"], mode=case.get("mode", "patient"), session_id=session)
+            decision = classify(case["question"], session_id=session, drug_hint=case.get("drug") or None)
+            info = understand(case["question"], mode=case.get("mode", "patient"), session_id=session)
             expected_category = case.get("category", "")
 
             if expected_category in {"faers", "label_plus_faers"}:
@@ -179,6 +179,14 @@ def sweep(cases: list[dict]) -> dict:
         "current": current,
         "best_top_k_section_boost": best,
         "best_min_relevance": best_threshold,
+        "min_relevance_no_drug_sweep": [
+            {"min_relevance_no_drug": t, **retrieval_metrics(cases, current["top_k"], current["section_boost"], current["min_relevance"], t, current["min_support"])}
+            for t in thresholds
+        ],
+        "min_support_sweep": [
+            {"min_support": t, **retrieval_metrics(cases, current["top_k"], current["section_boost"], current["min_relevance"], current["min_relevance_no_drug"], t)}
+            for t in (0.20, 0.25, 0.30, 0.35, 0.40, 0.45)
+        ],
         "top_k_section_sweep": results,
         "min_relevance_sweep": threshold_results,
     }
@@ -208,7 +216,7 @@ def full_pipeline(cases: list[dict], sample_size: int) -> dict:
             remember_answer(session, "Metformin is used with diet and exercise to improve glycemic control.")
         start = time.perf_counter()
         try:
-            response = answer(case["query"], mode=case.get("mode", "patient"), session_id=session,
+            response = answer(case["question"], mode=case.get("mode", "patient"), session_id=session,
                               drug_hint=case.get("drug") or None)
             elapsed_ms = round((time.perf_counter() - start) * 1000, 1)
             expected = case.get("expected", "APPROVED")
