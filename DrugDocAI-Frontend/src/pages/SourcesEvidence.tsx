@@ -16,6 +16,7 @@ import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
+import { API_BASE } from "../data/api";
 
 export const SourcesEvidence: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -43,11 +44,38 @@ export const SourcesEvidence: React.FC = () => {
   // Download/view action — citations from the knowledge base are served by
   // the authenticated document endpoint. Alert if no URL is available.
   const handleDownloadDocument = (src: RagSource) => {
+    const fallbackFilename = src.doc || src.name;
+
     if (src.url) {
-      window.open(src.url, "_blank", "noopener,noreferrer");
-    } else {
-      window.open(`${import.meta.env.VITE_API_BASE || "http://localhost:8000"}/documents/${encodeURIComponent(src.doc || src.name)}/view`, "_blank", "noopener,noreferrer");
+      try {
+        const sourceUrl = new URL(src.url, API_BASE);
+        const apiOrigin = new URL(API_BASE).origin;
+
+        // Ingested-document citations previously pointed at the admin-only
+        // /documents/{filename}/view route. Keep external evidence URLs intact,
+        // but route internal uploaded documents through the authenticated
+        // user-facing evidence endpoint.
+        if (sourceUrl.origin === apiOrigin && sourceUrl.pathname.startsWith("/documents/")) {
+          window.open(
+            `${API_BASE}/documents/user-view/${encodeURIComponent(fallbackFilename)}`,
+            "_blank",
+            "noopener,noreferrer"
+          );
+          return;
+        }
+
+        window.open(sourceUrl.toString(), "_blank", "noopener,noreferrer");
+        return;
+      } catch {
+        // Fall through to the authenticated uploaded-document endpoint.
+      }
     }
+
+    window.open(
+      `${API_BASE}/documents/user-view/${encodeURIComponent(fallbackFilename)}`,
+      "_blank",
+      "noopener,noreferrer"
+    );
   };
 
   const handleBackToAnswer = () => {
