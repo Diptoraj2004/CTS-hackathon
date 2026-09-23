@@ -74,6 +74,41 @@ export interface ChatSessionSummary {
   message_count: number;
 }
 
+export interface ChatSessionMessage {
+  id: number;
+  role: "user" | "assistant" | string;
+  content: string;
+  additional?: Record<string, unknown>;
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  messages: ChatSessionMessage[];
+}
+
+export async function getChatSession(
+  sessionId: string
+): Promise<ChatSessionDetail> {
+  const id = sessionId.trim();
+  if (!id) {
+    throw new Error("No conversation session was provided.");
+  }
+
+  const response = await authenticatedFetch(
+    `${API_BASE}/sessions/${encodeURIComponent(id)}`
+  );
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      typeof data?.detail === "string"
+        ? data.detail
+        : "Could not load the conversation (HTTP " + response.status + ")."
+    );
+  }
+
+  return data as ChatSessionDetail;
+}
+
 export async function createChatSession(
   drugName: string
 ): Promise<ChatSessionSummary> {
