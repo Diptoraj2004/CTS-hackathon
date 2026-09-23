@@ -16,7 +16,7 @@ import { Header } from "../components/Header";
 import { Footer } from "../components/Footer";
 import { AppLayout } from "../layouts/AppLayout";
 import { loadRagSources, RagSource, getDrugProfile, DrugProfileResponse } from "../data/ragService";
-import { API_BASE } from "../data/api";
+import { API_BASE, authenticatedFetch } from "../data/api";
 
 export const SourcesEvidence: React.FC = () => {
   const [searchParams] = useSearchParams();
@@ -43,39 +43,52 @@ export const SourcesEvidence: React.FC = () => {
 
   // Download/view action — citations from the knowledge base are served by
   // the authenticated document endpoint. Alert if no URL is available.
-  const handleDownloadDocument = (src: RagSource) => {
+  const handleDownloadDocument = async (src: RagSource) => {
     const fallbackFilename = src.doc || src.name;
+    let targetUrl: string;
 
     if (src.url) {
       try {
         const sourceUrl = new URL(src.url, API_BASE);
         const apiOrigin = new URL(API_BASE).origin;
 
-        // Ingested-document citations previously pointed at the admin-only
-        // /documents/{filename}/view route. Keep external evidence URLs intact,
-        // but route internal uploaded documents through the authenticated
-        // user-facing evidence endpoint.
-        if (sourceUrl.origin === apiOrigin && sourceUrl.pathname.startsWith("/documents/")) {
-          window.open(
-            `${API_BASE}/documents/user-view/${encodeURIComponent(fallbackFilename)}`,
-            "_blank",
-            "noopener,noreferrer"
-          );
+        // External evidence links can be opened directly. Uploaded documents
+        // must go through the authenticated API client because a browser tab
+        // cannot attach the bearer token to window.open().
+        if (sourceUrl.origin !== apiOrigin || !sourceUrl.pathname.startsWith("/documents/")) {
+          window.open(sourceUrl.toString(), "_blank", "noopener,noreferrer");
           return;
         }
-
-        window.open(sourceUrl.toString(), "_blank", "noopener,noreferrer");
-        return;
       } catch {
         // Fall through to the authenticated uploaded-document endpoint.
       }
     }
 
-    window.open(
-      `${API_BASE}/documents/user-view/${encodeURIComponent(fallbackFilename)}`,
-      "_blank",
-      "noopener,noreferrer"
-    );
+    targetUrl = `${API_BASE}/documents/user-view/${encodeURIComponent(fallbackFilename)}`;
+
+    // Open synchronously first so popup blockers don't treat the async fetch
+    // as an unsolicited popup. The authenticated response becomes the tab's
+    // blob URL once the fetch completes.
+    const viewer = window.open("", "_blank");
+    if (!viewer) return;
+
+    try {
+      viewer.document.title = "DrugDoc AI — Source";
+      const response = await authenticatedFetch(targetUrl);
+
+      if (!response.ok) {
+        throw new Error(`Source document could not be opened (HTTP ${response.status}).`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      viewer.location.href = objectUrl;
+
+      // Keep the object URL alive long enough for the new tab to render.
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      viewer.close();
+    }
   };
 
   const handleBackToAnswer = () => {
