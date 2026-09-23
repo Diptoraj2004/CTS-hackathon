@@ -74,6 +74,8 @@ print('LanceDB rows:', table.count_rows())
 
 ## Cell 4 — generate questions
 
+The exact mentor suite is `calib/mentor_100_questions.json`. `calib.make_questions` now imports all 100 cases into the generated calibration CSV.
+
 ```python
 %cd /content/CTS-hackathon
 !python -m calib.make_questions

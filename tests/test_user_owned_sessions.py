@@ -66,11 +66,17 @@ def test_legacy_unowned_session_is_not_claimed(tmp_path, monkeypatch):
     db = tmp_path / "legacy.sqlite3"
     monkeypatch.setenv("SESSION_DB_PATH", str(db))
 
-    from backend.rag import query_understanding
     from backend.rag import user_sessions
 
-    # Existing history mechanism creates an old-style anonymous session.
-    query_understanding.get_history("legacy-session")
+    # Simulate an old-style anonymous session without importing the optional
+    # LangChain history layer; the ownership rule belongs to user_sessions.
+    connection = user_sessions.connection()
+    connection.execute(
+        "INSERT INTO chat_sessions(session_id, last_used) VALUES (?, ?)",
+        ("legacy-session", 1.0),
+    )
+    connection.commit()
+    connection.close()
 
     assert not user_sessions.owns_session("user-A", "legacy-session")
     assert not user_sessions.owns_session("user-B", "legacy-session")

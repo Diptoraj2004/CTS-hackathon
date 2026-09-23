@@ -788,14 +788,10 @@ def pending_reviews():
     return review_queue.pending()
 
 
-@app.get("/review/{request_id}")
-def get_review(request_id: str, user: dict = Depends(require_user)):
+@app.get("/review/{request_id}", dependencies=[Depends(require_admin_key)])
+def get_review(request_id: str):
     try:
-        review = review_queue.get(request_id)
-        # Prevent leaking the existence of another user's review by returning a standard 404
-        if review.get("user_id") and review["user_id"] != str(user["id"]):
-            raise KeyError
-        return review
+        return review_queue.get(request_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="unknown request id")
 

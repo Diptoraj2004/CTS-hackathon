@@ -163,6 +163,38 @@ def session_summary(session_id: str) -> str | None:
     connection.close()
     return row["summary"] if row and row["summary"] else None
 
+def session_drug(session_id: str) -> str | None:
+    """Return the persisted active medicine for a session.
+
+    The value is session-scoped, so it survives context trimming and a fresh
+    process while never becoming a global/device-level memory.
+    """
+    connection = _session_connection()
+    row = connection.execute(
+        "SELECT drug_name FROM chat_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    connection.close()
+    return row["drug_name"] if row and row["drug_name"] else None
+
+
+def set_session_drug(session_id: str, drug_name: str | None) -> None:
+    """Persist the canonical active medicine for an already-authorized session."""
+    if not drug_name:
+        return
+    connection = _session_connection()
+    now = time.time()
+    connection.execute(
+        """
+        UPDATE chat_sessions
+        SET drug_name = ?, updated_at = ?, last_used = ?
+        WHERE session_id = ?
+        """,
+        (drug_name, now, now, session_id),
+    )
+    connection.commit()
+    connection.close()
+
 
 def context_status(session_id: str) -> dict:
     messages = session_messages(session_id)
@@ -380,11 +412,24 @@ def understand(query: str, mode: Mode, session_id: str = "default",
     history = get_history(session_id)
     summary = session_summary(session_id)
     known = known_drugs()
-    drugs = extract_drugs(" ".join(part for part in (query, summary or "") if part), known)
+    drugs = extract_drugs(query, known)
+
+    # Explicit query text wins. Otherwise resolve the selected medicine, then
+    # the persisted session medicine, then legacy message history. This order
+    # prevents a stale local/device value from becoming the source of truth.
     if not drugs and drug_hint:
         drugs = resolve_drug_hint(drug_hint, known)
     if not drugs:
-        drugs = previous_drugs(history)  # follow-up: reuse drug from earlier turn
+        persisted_drug = session_drug(session_id)
+        if persisted_drug and persisted_drug in known:
+            drugs = [persisted_drug]
+    if not drugs:
+        drugs = previous_drugs(history)
+
+    if drugs:
+        # Keep the active medicine durable beyond any in-memory/history trim.
+        # The API has already authenticated and ownership-checked this session.
+        set_session_drug(session_id, drugs[0])
 
     parts = [d for d in drugs if d not in query.lower()]  # add drug if not literally present
     parts.append(query.strip())

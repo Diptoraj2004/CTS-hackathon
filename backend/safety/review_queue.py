@@ -42,7 +42,8 @@ class HumanReviewQueue:
         tmp.write_text(json.dumps(self._pending), encoding="utf-8")
         tmp.replace(QUEUE_PATH)
 
-    def flag(self, query: str, mode: str, reason: str) -> dict:
+    def flag(self, query: str, mode: str, reason: str,
+             user_id: str | None = None, session_id: str | None = None) -> dict:
         try:
             safe_query = redact(query)
         except RedactionUnavailable:
@@ -59,6 +60,8 @@ class HumanReviewQueue:
                 "query": safe_query,
                 "mode": mode,
                 "reason": reason,
+                "user_id": user_id,
+                "session_id": session_id,
                 "status": "PENDING",
                 "reviewer_notes": None,
                 "final_answer": None,

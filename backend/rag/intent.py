@@ -34,6 +34,8 @@ _FAERS_PATTERNS = [
     r"\bhow common\b", r"\bhow often\b", r"\bfrequency\b", r"\bfrequencies\b",
     r"\bincidence\b", r"\bincidence rate\b", r"\bpercentage\b", r"\bpercent\b",
     r"\brate of\b", r"\bhow many (reports|cases|people|patients)\b",
+    r"\bfrequent (?:complication|side effect|reaction|adverse event)s?\b",
+    r"\bcommon (?:complication|side effect|reaction|adverse event)s?\b",
     r"\breported (?:cases|events|reactions)\b", r"\bspontaneous reports?\b",
     r"\bfaers\b", r"\badverse event reports?\b",
 ]

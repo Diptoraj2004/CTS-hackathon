@@ -1,7 +1,10 @@
 """Fetch and parse patient-facing brand-source pages and PDFs."""
 import datetime
+import ipaddress
 import os
+import socket
 import tempfile
+import urllib.parse
 
 import requests
 from bs4 import BeautifulSoup
@@ -10,13 +13,65 @@ from backend.app.ingestion.pdf_parser import PDFParser
 from backend.app.models import DocumentMetadata, Page, PageBlock, ParsedDocument
 
 MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
+MAX_REDIRECTS = 3
 _HEADERS = {"User-Agent": "DrugDocAI/1.0 medical-document-ingestion"}
+
+
+def _validate_remote_url(url: str) -> None:
+    """Reject URL targets that resolve to local/private network addresses."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Brand source must be an absolute HTTP(S) URL.")
+    if parsed.username or parsed.password:
+        raise ValueError("Brand source URLs may not contain embedded credentials.")
+
+    hostname = parsed.hostname
+    try:
+        literal = ipaddress.ip_address(hostname)
+        addresses = [literal]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(hostname, parsed.port or (443 if parsed.scheme == "https" else 80), type=socket.SOCK_STREAM)
+        except OSError as exc:
+            raise ValueError("Brand source hostname could not be resolved.") from exc
+        addresses = [ipaddress.ip_address(info[4][0]) for info in infos]
+
+    for address in addresses:
+        if (address.is_private or address.is_loopback or address.is_link_local
+                or address.is_multicast or address.is_unspecified or address.is_reserved):
+            raise ValueError("Brand source URL resolves to a private or otherwise restricted network address.")
+
+
+def _fetch_remote(url: str):
+    """Fetch with bounded, revalidated redirects to prevent SSRF via redirects."""
+    current = url
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        for _ in range(MAX_REDIRECTS + 1):
+            _validate_remote_url(current)
+            response = session.get(
+                current, headers=_HEADERS, timeout=20, stream=True, allow_redirects=False
+            )
+            if response.is_redirect or response.is_permanent_redirect:
+                location = response.headers.get("Location")
+                response.close()
+                if not location:
+                    raise ValueError("Brand source returned an invalid redirect.")
+                current = urllib.parse.urljoin(current, location)
+                continue
+            response.raise_for_status()
+            return response, current
+        raise ValueError("Brand source exceeded the permitted redirect limit.")
+    except Exception:
+        session.close()
+        raise
 
 
 class BrandSourceParser:
     def parse(self, url: str, doc_id: str | None, drug_name: str) -> ParsedDocument:
-        response = requests.get(url, headers=_HEADERS, timeout=20, stream=True)
-        response.raise_for_status()
+        response, final_url = _fetch_remote(url)
+        url = final_url
         content_type = response.headers.get("content-type", "").lower()
         suffix = os.path.splitext(url.split("?", 1)[0])[1].lower()
         if "pdf" in content_type or suffix == ".pdf":

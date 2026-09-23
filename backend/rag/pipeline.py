@@ -5,6 +5,7 @@ label retrieval, FAERS, or an escalation. This prevents unnecessary vector
 searches while keeping factual medication answers grounded in source material.
 """
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 from backend.rag import config
 from backend.rag.api_tools import fetch_faers_adverse_events, format_faers_context
@@ -33,6 +34,11 @@ OUT_OF_SCOPE = {
 }
 INJECTION_QUERY_MESSAGE = "This request was blocked because it contains instructions that attempt to alter the assistant's operating rules. Please submit a medication question instead."
 INJECTION_CORPUS_MESSAGE = "A retrieved source was blocked because it contained an embedded instruction. The source was not passed to the answer model."
+
+# Reuse one worker instead of constructing a ThreadPoolExecutor for every
+# FAERS request. This avoids per-request thread creation while preserving the
+# existing parallel FAERS + retrieval behaviour.
+_FAERS_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="faers")
 
 
 def _response_from_cache(cached: dict, mode: Mode, intent) -> RAGResponse:
@@ -90,7 +96,9 @@ def _escalate(mode: Mode, reason: str, confidence: float, session_id: str,
 
 
 def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str | None = None) -> RAGResponse:
+    started = time.perf_counter()
     intent = classify(query, session_id=session_id, drug_hint=drug_hint)
+    intent_ms = (time.perf_counter() - started) * 1000
 
     if injection_guard.looks_like_injection(query):
         return _escalate(mode, "PROMPT_INJECTION", 0.0, session_id, risk_level="high", intent=intent)
@@ -105,7 +113,9 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
     if cached and cached.get("status") == "APPROVED":
         return _response_from_cache(cached, mode, intent)
 
+    understand_started = time.perf_counter()
     info = understand(query, mode=mode, session_id=session_id, drug_hint=drug_hint)
+    understand_ms = (time.perf_counter() - understand_started) * 1000
     if intent.needs_faers:
         # "How often" is also a dosage phrase in ordinary label queries, but
         # once intent routing selects FAERS it should not bias retrieval toward
@@ -116,10 +126,12 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
 
     faers_future = None
     if intent.needs_faers and info.drug_names:
-        faers_future = ThreadPoolExecutor(max_workers=1).submit(fetch_faers_adverse_events, info.drug_names[0])
+        faers_future = _FAERS_EXECUTOR.submit(fetch_faers_adverse_events, info.drug_names[0])
 
+    retrieval_started = time.perf_counter()
     retrieved = retrieve(info.standalone_query, info.drug_names,
                          sections=info.section_hints, preferred_audience=mode)
+    retrieval_ms = (time.perf_counter() - retrieval_started) * 1000
 
     if any(injection_guard.looks_like_injection(r.chunk.text) for r in retrieved):
         return _escalate(mode, "CORPUS_INJECTION", 0.0, session_id, risk_level="high",
@@ -142,7 +154,9 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         faers_result = faers_future.result()
         faers_context = format_faers_context(faers_result)
 
+    generation_started = time.perf_counter()
     gen = generate(info, gate.evidence, faers_context=faers_context)
+    generation_ms = (time.perf_counter() - generation_started) * 1000
     if NOT_IN_CONTEXT in gen.text:
         return _escalate(mode, "ANSWER_NOT_GROUNDED", gate.top_score, session_id,
                          intent=intent, retrieval_used=True, history_used=intent.needs_history,
@@ -186,6 +200,14 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
         return _escalate(mode, f"LOW_CITATION_COVERAGE: {cit.coverage:.0%}", confidence, session_id,
                          intent=intent, retrieval_used=True, history_used=intent.needs_history,
                          faers_used=faers_result is not None, quality_metrics=metrics)
+
+    total_ms = (time.perf_counter() - started) * 1000
+    print(
+        "[rag-timing] "
+        f"intent_ms={intent_ms:.1f} understand_ms={understand_ms:.1f} "
+        f"retrieval_ms={retrieval_ms:.1f} generation_ms={generation_ms:.1f} "
+        f"total_ms={total_ms:.1f} faers={faers_result is not None}"
+    )
 
     response = RAGResponse(mode=mode, answer=cit.text, citations=cit.citations,
                            status="APPROVED", confidence=round(confidence, 2),

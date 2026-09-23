@@ -123,6 +123,34 @@ def corpus():
 
 def load_existing():
     rows=[]; seen=set()
+    mentor_path = Path(__file__).with_name("mentor_100_questions.json")
+    if mentor_path.exists():
+        data = json.loads(mentor_path.read_text(encoding="utf-8"))
+        for r in data.get("cases", []):
+            q = r.get("question") or ""
+            key = (norm(q), r.get("mode", "patient"))
+            if not q or key in seen:
+                continue
+            expected = "ESCALATED" if any(x in r.get("expected", "") for x in ("ESCALATE", "DECLINE", "MALFORMED")) else "APPROVED"
+            rows.append({
+                "id": f"mentor-{r['id']}",
+                "source": "mentor_100",
+                "category": r.get("expected", ""),
+                "mode": r.get("mode", "patient"),
+                "question": q,
+                "context": "",
+                "drug": "",
+                "target_sections": "",
+                "gold_topic": "",
+                "expected": expected,
+                "must_not_contain": "",
+                "expected_chunk": "",
+                "expected_keywords": "",
+                "keywords": [],
+                "chunk": None,
+            })
+            seen.add(key)
+
     for source,path in (("eval_set",EVAL_SET),("gold_standard",GOLD_SET)):
         if not path.exists(): continue
         data=json.loads(path.read_text(encoding="utf-8-sig"))

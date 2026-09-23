@@ -48,10 +48,20 @@ def parse_upload(path: str, doc_id: str | None, drug_name: str,
     with zipfile.ZipFile(path) as archive, tempfile.TemporaryDirectory(prefix="drugdoc_zip_") as temp_dir:
         members = _safe_zip_members(archive)
         for index, member in enumerate(members):
+            if member.file_size > MAX_ARCHIVE_BYTES:
+                raise ValueError("ZIP member exceeds the permitted expanded size limit.")
             destination = Path(temp_dir) / Path(member.filename)
             destination.parent.mkdir(parents=True, exist_ok=True)
+            written = 0
             with archive.open(member) as source, destination.open("wb") as target:
-                target.write(source.read(MAX_ARCHIVE_BYTES + 1))
+                while True:
+                    block = source.read(1024 * 1024)
+                    if not block:
+                        break
+                    written += len(block)
+                    if written > MAX_ARCHIVE_BYTES:
+                        raise ValueError("ZIP member exceeds the permitted expanded size limit.")
+                    target.write(block)
             child_id = f"{doc_id or Path(path).stem}_{index}"
             child_name = f"{original_filename or os.path.basename(path)}:{member.filename}"
             chunks.extend(parse_and_chunk(

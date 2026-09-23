@@ -331,6 +331,22 @@ def delete_session(user_id: str, session_id: str) -> bool:
     return True
 
 
+def get_selected_drug(session_id: str) -> str | None:
+    """Return the medicine persisted on a session.
+
+    API callers should perform ownership validation before exposing this value.
+    The helper exists so the RAG/session layer uses one canonical persisted
+    medicine identity instead of maintaining a process-global selected drug.
+    """
+    conn = connection()
+    row = conn.execute(
+        "SELECT drug_name FROM chat_sessions WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    conn.close()
+    return row["drug_name"] if row and row["drug_name"] else None
+
+
 def set_selected_drug(
     user_id: str,
     session_id: str,

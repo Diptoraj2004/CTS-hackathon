@@ -23,7 +23,7 @@ python -m calib.calibrate
 python -m calib.calibrate --llm 150
 ```
 
-The first command creates `calib/calibration_questions.csv` from the existing gold sets plus mentor-focused routing/FAERS/injection/history cases and, when available, real drugs in the current LanceDB corpus.
+The first command creates `calib/calibration_questions.csv` from the exact `calib/mentor_100_questions.json` suite, the existing gold sets, mentor-focused routing/FAERS/injection/history cases, and, when available, real drugs in the current LanceDB corpus.
 
 The second command sweeps the current retrieval parameters and writes `calib/calibration_report.json`.
 
