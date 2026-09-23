@@ -727,16 +727,17 @@ def view_document(filename: str, request: Request, download: bool = False):
 
 
 @app.get("/documents/user-view/{filename}", response_class=FileResponse)
-def view_document_for_user(filename: str, request: Request):
+def view_document_for_user(
+    filename: str,
+    request: Request,
+    user: dict = Depends(require_user),
+):
     """Serve an ingested source document to an authenticated user.
 
     The main document view/download route remains admin-only. This dedicated
     route exists so citation links shown in the normal user experience can
     open the same uploaded evidence without exposing the admin dependency.
     """
-    user = require_user(request.headers.get("authorization"))
-    if not user:
-        raise HTTPException(status_code=401, detail="A valid bearer token is required.")
 
     safe_filename = os.path.basename(filename)
     file_path = (UPLOAD_DIR / safe_filename).resolve()
