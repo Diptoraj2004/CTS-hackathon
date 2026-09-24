@@ -24,6 +24,10 @@ export const SourcesEvidence: React.FC = () => {
 
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") as "patient" | "professional") || "professional";
+  const sessionId = searchParams.get("session");
+  const sessionParam = sessionId
+    ? `&session=${encodeURIComponent(sessionId)}`
+    : "";
 
   const modeLabel = mode === "professional" ? "Healthcare Professional" : "Patient / Caregiver";
   const modeDesc =
@@ -92,7 +96,9 @@ export const SourcesEvidence: React.FC = () => {
   };
 
   const handleBackToAnswer = () => {
-    navigate(`/results?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+    navigate(
+      `/results?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
+    );
   };
 
   return (
