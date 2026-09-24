@@ -387,7 +387,7 @@ useEffect(() => {
 
   const handleViewDocs = () => {
     navigate(
-      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}${sessionParam}`
+      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
     );
   };
 
