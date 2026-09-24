@@ -28,6 +28,10 @@ export const MedicationInfo: React.FC = () => {
 
   const drug = searchParams.get("drug") || "Amoxicillin";
   const mode = (searchParams.get("mode") as "patient" | "professional") || "professional";
+  const sessionId = searchParams.get("session");
+  const sessionParam = sessionId
+    ? `&session=${encodeURIComponent(sessionId)}`
+    : "";
 
   const [profile, setProfile] = useState<DrugProfileResponse | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -68,11 +72,15 @@ export const MedicationInfo: React.FC = () => {
   };
 
   const handleBackToResults = () => {
-    navigate(`/results?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+    navigate(
+      `/results?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
+    );
   };
 
   const handleViewSources = () => {
-    navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+    navigate(
+      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
+    );
   };
 
   const displaySources = (ragSources || []).map((src, i) => ({
