@@ -34,6 +34,7 @@ OUT_OF_SCOPE = {
 }
 INJECTION_QUERY_MESSAGE = "This request was blocked because it contains instructions that attempt to alter the assistant's operating rules. Please submit a medication question instead."
 INJECTION_CORPUS_MESSAGE = "A retrieved source was blocked because it contained an embedded instruction. The source was not passed to the answer model."
+GREETING_MESSAGE = "Hello! I can help with questions about the medications in the uploaded documents."
 
 # Reuse one worker instead of constructing a ThreadPoolExecutor for every
 # FAERS request. This avoids per-request thread creation while preserving the
@@ -50,6 +51,25 @@ def _response_from_cache(cached: dict, mode: Mode, intent) -> RAGResponse:
         intent=intent.intent, intent_confidence=intent.confidence,
         retrieval_used=False, history_used=True, faers_used=bool(cached.get("faers_used")),
         quality_metrics=metrics,
+    )
+
+
+def _greeting_response(mode: Mode, intent) -> RAGResponse:
+    return RAGResponse(
+        mode=mode,
+        answer=GREETING_MESSAGE,
+        status="APPROVED",
+        confidence=0.99,
+        confidence_bucket="high",
+        intent=intent.intent,
+        intent_confidence=intent.confidence,
+        retrieval_used=False,
+        history_used=False,
+        faers_used=False,
+        quality_metrics=QualityMetrics(
+            estimated=True,
+            methodology="Greeting-only response; no source retrieval was required.",
+        ),
     )
 
 
@@ -102,6 +122,9 @@ def answer(query: str, mode: Mode, session_id: str = "default", drug_hint: str |
 
     if injection_guard.looks_like_injection(query):
         return _escalate(mode, "PROMPT_INJECTION", 0.0, session_id, risk_level="high", intent=intent)
+
+    if intent.intent == "GREETING":
+        return _greeting_response(mode, intent)
 
     if intent.intent == "OFF_TOPIC":
         return _escalate(mode, "OFF_TOPIC", 0.0, session_id, risk_level="none", intent=intent)
