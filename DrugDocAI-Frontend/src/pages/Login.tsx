@@ -593,7 +593,7 @@ export const Login: React.FC = () => {
           )}
         </div>
 
-        {/* SURROUNDING PHARMACEUTICAL & BOTANICAL ACCENTS (RIGHT) */}
+        {/* SURROUNDING PHARMACEUTICAL & BOTANICAL ACCENTS */}
         <div className="login-accents-right" aria-hidden="true">
           <div className="login-leaf login-leaf-right" />
           <div className="login-script-text font-script text-right-script">
