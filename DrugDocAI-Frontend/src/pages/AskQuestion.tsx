@@ -141,6 +141,9 @@ export const AskQuestion: React.FC = () => {
   const [sessionDrug, setSessionDrug] = useState("");
   const drug = searchParams.get("drug") || sessionDrug;
   const mode = (searchParams.get("mode") || (user?.role === "doctor" ? "professional" : "patient")) as "patient" | "professional";
+  const sessionParam = sessionId
+    ? `&session=${encodeURIComponent(sessionId)}`
+    : "";
 
   const [drugProfile, setDrugProfile] = useState<DrugProfileResponse | null>(null);
   const [sessionLoadError, setSessionLoadError] = useState<string | null>(null);
@@ -383,7 +386,9 @@ useEffect(() => {
   };
 
   const handleViewDocs = () => {
-    navigate(`/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`);
+    navigate(
+      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
+    );
   };
 
   const handleOpenSession = (session: ChatSessionSummary) => {
@@ -1102,7 +1107,7 @@ useEffect(() => {
                   type="button"
                   onClick={() =>
                     navigate(
-                      `/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                      `/medication-info?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
                     )
                   }
                 >
@@ -1147,7 +1152,7 @@ useEffect(() => {
                           type="button"
                           onClick={() =>
                             navigate(
-                              `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                              `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
                             )
                           }
                         >
@@ -1164,7 +1169,7 @@ useEffect(() => {
                   style={{ marginTop: "12px" }}
                   onClick={() =>
                     navigate(
-                      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
                     )
                   }
                 >
