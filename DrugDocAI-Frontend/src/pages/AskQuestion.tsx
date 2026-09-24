@@ -1152,7 +1152,7 @@ useEffect(() => {
                           type="button"
                           onClick={() =>
                             navigate(
-                              `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                              `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
                             )
                           }
                         >
@@ -1169,7 +1169,7 @@ useEffect(() => {
                   style={{ marginTop: "12px" }}
                   onClick={() =>
                     navigate(
-                      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}`
+                      `/sources?drug=${encodeURIComponent(drug)}&mode=${mode}${sessionParam}`
                     )
                   }
                 >
