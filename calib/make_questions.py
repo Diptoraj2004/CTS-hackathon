@@ -112,7 +112,11 @@ def corpus():
     table = get_table()
     if table is None or table.count_rows() == 0: return {}, {}
     cols = [c for c in ("drug_name", "section", "text", "chunk_id") if c in table.schema.names]
-    rows = table.to_arrow(columns=cols).to_pylist()
+    try:
+        rows = table.to_arrow(columns=cols).to_pylist()
+    except TypeError:
+        # LanceDB versions differ in whether to_arrow() accepts a columns kwarg.
+        rows = table.search().select(cols).to_arrow().to_pylist()
     sections, texts = defaultdict(set), defaultdict(list)
     for row in rows:
         d = row.get("drug_name")
@@ -146,8 +150,6 @@ def load_existing():
                 "must_not_contain": "",
                 "expected_chunk": "",
                 "expected_keywords": "",
-                "keywords": [],
-                "chunk": None,
             })
             seen.add(key)
 
