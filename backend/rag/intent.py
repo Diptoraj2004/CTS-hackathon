@@ -47,6 +47,11 @@ _OFF_TOPIC_PATTERNS = [
 ]
 _OFF_TOPIC_RE = re.compile("|".join(_OFF_TOPIC_PATTERNS), re.I)
 
+_GREETING_RE = re.compile(
+    r"^(?:hi+|hey+|he+lo+|hello+|greetings|yo|good\\s+(?:morning|afternoon|evening))"
+    r"(?:\\s+(?:there|everyone|folks|friend))?[!.?]*$",
+    re.I,
+)
 
 
 def _has_history(session_id: str) -> bool:
@@ -56,6 +61,10 @@ def _has_history(session_id: str) -> bool:
 def classify(query: str, session_id: str = "default", drug_hint: str | None = None) -> IntentDecision:
     q = " ".join(query.strip().split())
     has_history = _has_history(session_id)
+
+    if _GREETING_RE.fullmatch(q):
+        return IntentDecision("GREETING", has_history, False, False, False, 0.99,
+                              "Greeting-only query; no retrieval required.")
 
     if _OFF_TOPIC_RE.search(q) and not _FAERS_RE.search(q):
         return IntentDecision("OFF_TOPIC", has_history, False, False, False, 0.93,
