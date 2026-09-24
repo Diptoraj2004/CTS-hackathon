@@ -357,17 +357,23 @@ def known_drugs() -> list[str]:
 
 def extract_drugs(query: str, known: list[str]) -> list[str]:
     q = query.lower()
-    found = [d for d in known if re.search(r"\b" + re.escape(d) + r"\b", q)]
+    # `known` holds whatever case the ingested label used (e.g. "AC FAST"),
+    # not necessarily lowercase -- matching a lowercased query against
+    # un-lowercased known names silently never matches real all-caps/mixed-
+    # case drug names. Build a lowercase lookup once instead.
+    known_lower = {d.lower(): d for d in known}
+    found = [known_lower[dl] for dl in known_lower
+             if re.search(r"\b" + re.escape(dl) + r"\b", q)]
     for alias, canonical in BRAND_TO_GENERIC.items():
         if not re.search(r"\b" + re.escape(alias) + r"\b", q):
             continue
-        if canonical in known and canonical not in found:
-            found.append(canonical)
+        if canonical in known_lower and known_lower[canonical] not in found:
+            found.append(known_lower[canonical])
     if not found:  # tolerate typos, e.g. "amoxicilin"
         for token in re.findall(r"[a-z][a-z\-]{4,}", q):
-            match = difflib.get_close_matches(normalize_drug_name(token), known, n=1, cutoff=0.8)
-            if match and match[0] not in found:
-                found.append(match[0])
+            match = difflib.get_close_matches(normalize_drug_name(token), list(known_lower), n=1, cutoff=0.8)
+            if match and known_lower[match[0]] not in found:
+                found.append(known_lower[match[0]])
     return found
 
 

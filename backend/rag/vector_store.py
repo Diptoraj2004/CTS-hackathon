@@ -125,7 +125,12 @@ def _where_drugs(search, drug_names: list[str] | None,
                  source: str | None = None, audience: str | None = None):
     if drug_names:
         names = ", ".join(f"'{name.lower().replace(chr(39), chr(39) * 2)}'" for name in drug_names)
-        search = search.where(f"drug_name IN ({names})")
+        # LOWER() on both sides: the stored drug_name column keeps whatever
+        # case the ingested label used (e.g. "AC FAST"), and this IN clause
+        # is a case-sensitive string comparison otherwise -- it was matching
+        # zero rows for any drug name not already lowercase in the corpus,
+        # which then fell through to an unfiltered search over everything.
+        search = search.where(f"LOWER(drug_name) IN ({names})")
     if source:
         search = search.where(f"source = '{source.replace(chr(39), chr(39) * 2)}'")
     if audience:
