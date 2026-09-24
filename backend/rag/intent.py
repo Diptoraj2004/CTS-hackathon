@@ -48,8 +48,8 @@ _OFF_TOPIC_PATTERNS = [
 _OFF_TOPIC_RE = re.compile("|".join(_OFF_TOPIC_PATTERNS), re.I)
 
 _GREETING_RE = re.compile(
-    r"^(?:hi+|hey+|he+lo+|hello+|greetings|yo|good\\s+(?:morning|afternoon|evening))"
-    r"(?:\\s+(?:there|everyone|folks|friend))?[!.?]*$",
+    r"^(?:hi+|hey+|he+lo+|hello+|greetings|yo|good\s+(?:morning|afternoon|evening))"
+    r"(?:\s+(?:there|everyone|folks|friend))?[!.?]*$",
     re.I,
 )
 
