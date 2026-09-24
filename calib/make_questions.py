@@ -150,8 +150,6 @@ def load_existing():
                 "must_not_contain": "",
                 "expected_chunk": "",
                 "expected_keywords": "",
-                "keywords": [],
-                "chunk": None,
             })
             seen.add(key)
 
